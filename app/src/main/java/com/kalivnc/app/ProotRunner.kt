@@ -7,9 +7,13 @@ object ProotRunner {
     /**
      * Exécute une commande dans le rootfs Kali via PRoot.
      *
-     * On évite -w /root et /usr/bin/env comme premier programme invité :
-     * les anciennes versions de PRoot ont eu des problèmes Android liés au cwd.
-     * Le changement de répertoire est fait depuis bash à l'intérieur du rootfs.
+     * PRoot utilise le répertoire courant du processus hôte lorsque aucun
+     * répertoire invité absolu n'est fourni. Sur Android cela donne souvent
+     * /data/user/0/<package>/files/./. et provoque :
+     * "can't chdir(...): No such file or directory".
+     *
+     * On force donc le cwd invité avec -w /root, qui existe dans le rootfs,
+     * et on lance directement bash sans dépendre du cwd Android.
      */
     fun builder(ctx: Context, script: String): ProcessBuilder {
         val files = ctx.filesDir
@@ -22,17 +26,21 @@ object ProotRunner {
             "--kill-on-exit",
             "-0",
             "-r", root.path,
+            "-w", "/root",
             "-b", "/dev",
             "-b", "/proc",
             "/bin/bash", "-c",
-            "cd /root && $script"
+            script
         )
 
         val pb = ProcessBuilder(cmd)
+
+        // Le cwd hôte n'est plus utilisé pour déterminer le cwd invité :
+        // PRoot reçoit explicitement -w /root.
         pb.directory(files)
 
-        // Ne pas transmettre les variables Android pouvant perturber un ELF
-        // glibc lancé dans le rootfs.
+        // Environnement minimal et déterministe pour les programmes glibc
+        // exécutés dans le rootfs Kali.
         val env = pb.environment()
         env.clear()
         env["HOME"] = "/root"
