@@ -86,15 +86,20 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
-      - name: Create GitHub Release
+      - name: Create or update GitHub Release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION=1.4
           TAG=v1.4
           APK=$(find app/build/outputs/apk/debug -type f -name '*.apk' | head -n1)
-          gh release create "$TAG" "$APK" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "Kali VNC $TAG" \
-            --notes "Kali VNC $TAG. Moteur Android proroot 1.2.8 intégré et vérifié."
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; updating APK asset."
+            gh release upload "$TAG" "$APK" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            echo "Creating release $TAG."
+            gh release create "$TAG" "$APK" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Kali VNC $TAG" \
+              --notes "Kali VNC $TAG. Moteur Android proroot 1.2.8 intégré et vérifié."
+          fi
