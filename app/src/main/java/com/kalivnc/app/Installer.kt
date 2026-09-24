@@ -18,7 +18,6 @@ import java.security.SecureRandom
 
 object Installer {
     fun rootfs(ctx: Context) = File(ctx.filesDir, "rootfs")
-    private fun prootBin(ctx: Context) = File(ctx.filesDir, "bin/proot")
     private fun marker(ctx: Context, n: String) = File(ctx.filesDir, "markers/$n")
 
     fun vncPassword(ctx: Context): String {
@@ -36,21 +35,34 @@ object Installer {
     /** Installe tout ce qui manque, avec des étapes idempotentes et vérifiées. */
     fun ensure(ctx: Context) {
         for (d in listOf("bin", "tmp", "markers", "dl")) File(ctx.filesDir, d).mkdirs()
-        ensureProot(ctx)
+        ensureNativeRuntime(ctx)
         ensureRootfs(ctx)
         configureRootfs(ctx)
         verifyProot(ctx)
         ensurePackages(ctx)
     }
 
-    private fun ensureProot(ctx: Context) {
-        val f = prootBin(ctx)
-        if (!(f.exists() && f.length() > 100_000)) {
-            KaliState.log("Téléchargement de PRoot ARM64…")
-            download(Config.PROOT_URL, f, "proot")
+    private fun ensureNativeRuntime(ctx: Context) {
+        val legacy = File(ctx.filesDir, "bin/proot")
+        val part = File(ctx.filesDir, "bin/proot.part")
+        if (legacy.exists()) legacy.delete()
+        if (part.exists()) part.delete()
+
+        val required = listOf(
+            "libproroot.so",
+            "libproroot-runtime.so",
+            "libproroot-linker.so",
+            "libproroot-bridge.so",
+            "libproroot-stub-loader.so"
+        )
+        val dir = File(ctx.applicationInfo.nativeLibraryDir)
+        val missing = required.filterNot { File(dir, it).exists() }
+        if (missing.isNotEmpty()) {
+            throw IOException("Moteur PRoot Android ${Config.PROOT_ENGINE_VERSION} absent de l'APK : ${missing.joinToString()}")
         }
-        validateProotElf(f)
-        f.setExecutable(true, false)
+        if (!ProotRunner.launcher(ctx).canExecute()) {
+            throw IOException("Le moteur PRoot Android n'est pas exécutable depuis nativeLibraryDir.")
+        }
     }
 
     private fun validateProotElf(f: File) {
@@ -148,8 +160,9 @@ object Installer {
      * une erreur PRoot en faux message "apt code 255".
      */
     private fun verifyProot(ctx: Context) {
-        if (marker(ctx, "proot-probe").exists()) return
-        KaliState.log("Diagnostic PRoot : test du shell Kali…")
+        val probeMarker = marker(ctx, "proot-probe-${Config.PROOT_ENGINE_VERSION}")
+        if (probeMarker.exists()) return
+        KaliState.log("Diagnostic PRoot Android ${Config.PROOT_ENGINE_VERSION} : test du shell Kali…")
         val p = ProotRunner.builder(
             ctx,
             """
@@ -172,11 +185,12 @@ object Installer {
         val code = p.waitFor()
         if (code != 0) {
             throw IOException(
-                "PRoot a quitté avec le code $code. " +
-                    (output.lineSequence().lastOrNull { it.isNotBlank() } ?: "aucun message PRoot")
+                "PRoot Android a quitté avec le code $code. " +
+                    (output.lineSequence().lastOrNull { it.isNotBlank() } ?: "aucun message PRoot") +
+                    "\n" + ProotRunner.diagnostics(ctx)
             )
         }
-        marker(ctx, "proot-probe").writeText("ok")
+        probeMarker.writeText("ok")
     }
 
     private fun ensurePackages(ctx: Context) {
@@ -190,7 +204,10 @@ object Installer {
         val code = p.waitFor()
 
         if (code != 0) {
-            throw IOException("Installation Kali interrompue : PRoot/shell a quitté avec le code $code")
+            throw IOException(
+                "Installation Kali interrompue : moteur PRoot/shell a quitté avec le code $code" +
+                    "\n" + ProotRunner.diagnostics(ctx)
+            )
         }
         marker(ctx, "packages").writeText("ok")
     }
@@ -221,7 +238,7 @@ object Installer {
             conn.connectTimeout = 20_000
             conn.readTimeout = 30_000
             conn.instanceFollowRedirects = false
-            conn.setRequestProperty("User-Agent", "KaliVNC/1.1")
+            conn.setRequestProperty("User-Agent", "KaliVNC/1.4")
             val code = conn.responseCode
             if (code in 300..399) {
                 val loc = conn.getHeaderField("Location") ?: throw IOException("Redirection sans Location")
