@@ -95,7 +95,14 @@ class KaliService : Service() {
                 if (portOpen()) { up = true; break }
                 Thread.sleep(700)
             }
-            if (!up) throw IOException("Le serveur VNC n'a pas démarré (voir le journal)")
+            if (!up) {
+                val exitCode = try { p.exitValue() } catch (_: IllegalThreadStateException) { null }
+                throw IOException(
+                    "Le serveur VNC n'a pas démarré. " +
+                        if (exitCode != null) "Le moteur PRoot a terminé avec le code $exitCode." else "Le moteur PRoot est toujours actif." +
+                        "\n" + ProotRunner.diagnostics(this)
+                )
+            }
             Thread.sleep(3000) // laisse XFCE afficher son bureau
             KaliState.setPhase(KaliState.Phase.READY)
             p.waitFor()
