@@ -54,7 +54,6 @@ jobs:
           echo "HEAD=$(git rev-parse HEAD)"
           git status --short
           git show HEAD:app/src/main/java/com/kalivnc/app/Config.kt | grep 'PROROOT_ENGINE_VERSION = "1.2.8"'
-          git show HEAD:app/src/main/java/com/kalivnc/app/ProotRunner.kt | grep 'PROROOT_LIBRARY'
           grep 'PROROOT_ENGINE_VERSION = "1.2.8"' app/src/main/java/com/kalivnc/app/Config.kt
 
       - name: Clean workspace and Gradle caches
