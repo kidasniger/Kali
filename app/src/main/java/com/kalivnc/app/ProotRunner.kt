@@ -4,43 +4,62 @@ import android.content.Context
 import java.io.File
 
 object ProotRunner {
-    /**
-     * Exécute une commande dans le rootfs Kali via PRoot.
-     *
-     * PRoot utilise le répertoire courant du processus hôte lorsque aucun
-     * répertoire invité absolu n'est fourni. Sur Android cela donne souvent
-     * /data/user/0/<package>/files/./. et provoque :
-     * "can't chdir(...): No such file or directory".
-     *
-     * On force donc le cwd invité avec -w /root, qui existe dans le rootfs,
-     * et on lance directement bash sans dépendre du cwd Android.
-     */
+    private fun nativeDir(ctx: Context) = File(ctx.applicationInfo.nativeLibraryDir)
+    fun launcher(ctx: Context) = File(nativeDir(ctx), Config.PROOT_LIBRARY)
+    fun runtimeLog(ctx: Context) = File(ctx.filesDir, "proroot-runtime.log")
+
+    fun diagnostics(ctx: Context): String {
+        val f = runtimeLog(ctx)
+        if (!f.exists()) return "Aucun journal natif PRoot disponible."
+        return try {
+            f.readLines().takeLast(80).joinToString("\n")
+        } catch (e: Exception) {
+            "Lecture du journal PRoot impossible : ${e.message}"
+        }
+    }
+
+    private fun requireRuntime(ctx: Context) {
+        val required = listOf(
+            "libproroot.so",
+            "libproroot-runtime.so",
+            "libproroot-linker.so",
+            "libproroot-bridge.so",
+            "libproroot-stub-loader.so"
+        )
+        val dir = nativeDir(ctx)
+        val missing = required.filterNot { File(dir, it).exists() }
+        if (missing.isNotEmpty()) {
+            throw IllegalStateException(
+                "Moteur PRoot Android ${Config.PROOT_ENGINE_VERSION} incomplet : ${missing.joinToString()}"
+            )
+        }
+        if (!launcher(ctx).canExecute()) {
+            throw IllegalStateException("Le moteur PRoot natif n'est pas exécutable depuis nativeLibraryDir.")
+        }
+    }
+
     fun builder(ctx: Context, script: String): ProcessBuilder {
+        requireRuntime(ctx)
         val files = ctx.filesDir
         val root = Installer.rootfs(ctx)
-        val proot = File(files, "bin/proot")
+        val tmp = File(files, "tmp").apply { mkdirs() }
 
         val cmd = mutableListOf(
-            proot.path,
-            "--link2symlink",
-            "--kill-on-exit",
+            launcher(ctx).path,
             "-0",
+            "--link2symlink",
+            "--static-loader",
             "-r", root.path,
             "-w", "/root",
             "-b", "/dev",
             "-b", "/proc",
+            "-b", "/sys",
             "/bin/bash", "-c",
             script
         )
 
         val pb = ProcessBuilder(cmd)
-
-        // Le cwd hôte n'est plus utilisé pour déterminer le cwd invité :
-        // PRoot reçoit explicitement -w /root.
         pb.directory(files)
-
-        // Environnement minimal et déterministe pour les programmes glibc
-        // exécutés dans le rootfs Kali.
         val env = pb.environment()
         env.clear()
         env["HOME"] = "/root"
@@ -51,10 +70,11 @@ object ProotRunner {
         env["LANG"] = "C.UTF-8"
         env["LC_ALL"] = "C.UTF-8"
         env["DEBIAN_FRONTEND"] = "noninteractive"
-        env["TMPDIR"] = File(files, "tmp").path
-        env["PROOT_TMP_DIR"] = File(files, "tmp").path
+        env["TMPDIR"] = tmp.path
+        env["PROROOT_TMP_DIR"] = tmp.path
+        env["PROROOT_VERBOSE"] = "1"
+        env["PROROOT_LOG_APPEND"] = runtimeLog(ctx).path
         env["PROOT_NO_SECCOMP"] = "1"
-
         pb.redirectErrorStream(true)
         return pb
     }
