@@ -53,9 +53,9 @@ object ProotRunner {
             "--static-loader",
             "-r", root.path,
             "-w", "/root",
-            "-b", "/dev",
-            "-b", "/proc",
-            "-b", "/sys",
+            "-b", "/dev:/dev",
+            "-b", "/proc:/proc",
+            "-b", "/sys:/sys",
             "/bin/bash", "-c",
             script
         )
