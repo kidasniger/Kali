@@ -4,8 +4,10 @@ import android.content.Context
 import java.io.File
 
 object ProotRunner {
+    private const val PROROOT_ENGINE_VERSION = "1.2.8"
+    private const val PROROOT_LIBRARY = "libproroot.so"
     private fun nativeDir(ctx: Context) = File(ctx.applicationInfo.nativeLibraryDir)
-    fun launcher(ctx: Context) = File(nativeDir(ctx), Config.PROOT_LIBRARY)
+    fun launcher(ctx: Context) = File(nativeDir(ctx), PROROOT_LIBRARY)
     fun runtimeLog(ctx: Context) = File(ctx.filesDir, "proroot-runtime.log")
 
     fun diagnostics(ctx: Context): String {
@@ -30,7 +32,7 @@ object ProotRunner {
         val missing = required.filterNot { File(dir, it).exists() }
         if (missing.isNotEmpty()) {
             throw IllegalStateException(
-                "Moteur PRoot Android ${Config.PROOT_ENGINE_VERSION} incomplet : ${missing.joinToString()}"
+                "Moteur PRoot Android ${PROROOT_ENGINE_VERSION} incomplet : ${missing.joinToString()}"
             )
         }
         if (!launcher(ctx).canExecute()) {
