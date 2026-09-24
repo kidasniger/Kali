@@ -42,6 +42,8 @@ jobs:
           test -f app/src/main/java/com/kalivnc/app/Config.kt
           grep -q 'PROROOT_ENGINE_VERSION = "1.2.8"' app/src/main/java/com/kalivnc/app/Config.kt
           grep -q 'PROROOT_LIBRARY = "libproroot.so"' app/src/main/java/com/kalivnc/app/Config.kt
+          grep -q 'versionCode = 7' app/build.gradle.kts
+          grep -q 'versionName = "1.4"' app/build.gradle.kts
           test -f app/src/main/assets/install-packages.sh
           test -f app/src/main/assets/start-vnc.sh
           test -f scripts/fetch-proroot.sh
@@ -89,8 +91,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION=$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts)
-          TAG=v${VERSION}
+          VERSION=1.4
+          TAG=v1.4
           APK=$(find app/build/outputs/apk/debug -type f -name '*.apk' | head -n1)
           gh release create "$TAG" "$APK" \
             --repo "$GITHUB_REPOSITORY" \
