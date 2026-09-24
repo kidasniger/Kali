@@ -2,18 +2,14 @@ package com.kalivnc.app
 
 /** Réglages centraux de l'application. */
 object Config {
-    /** Binaire PRoot ARM64 statique compatible Android (5.3.0). */
-    const val PROOT_URL =
-        "https://github.com/proot-me/proot/releases/download/v5.3.0/proot-v5.3.0-aarch64-static"
+    const val PROROOT_ENGINE_VERSION = "1.2.8"
+    const val PROROOT_LIBRARY = "libproroot.so"
 
     /** Rootfs Kali NetHunter minimal ARM64. */
     const val ROOTFS_URL =
         "https://kali.download/nethunter-images/current/rootfs/kali-nethunter-rootfs-minimal-arm64.tar.xz"
-
-    /** Fichier officiel de sommes SHA-256 du répertoire rootfs. */
     const val ROOTFS_SHA256_URL =
         "https://kali.download/nethunter-images/current/rootfs/SHA256SUMS"
-
     const val ROOTFS_FILE_NAME = "kali-nethunter-rootfs-minimal-arm64.tar.xz"
     const val ROOTFS_TOP_DIR = "kali-arm64"
 
