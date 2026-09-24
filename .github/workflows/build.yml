@@ -48,12 +48,23 @@ jobs:
           bash -n scripts/fetch-proroot.sh
           find app/src/main/jniLibs/arm64-v8a -maxdepth 1 -type f -print | sort
 
-      - name: Clean workspace
+      - name: Verify checked-out commit
+        run: |
+          set -e
+          echo "HEAD=$(git rev-parse HEAD)"
+          git status --short
+          git show HEAD:app/src/main/java/com/kalivnc/app/Config.kt | grep 'PROROOT_ENGINE_VERSION = "1.2.8"'
+          git show HEAD:app/src/main/java/com/kalivnc/app/ProotRunner.kt | grep 'PROROOT_LIBRARY'
+          grep 'PROROOT_ENGINE_VERSION = "1.2.8"' app/src/main/java/com/kalivnc/app/Config.kt
+
+      - name: Clean workspace and Gradle caches
         run: |
           rm -rf .gradle app/build
+          rm -rf ~/.gradle/caches/8.11/kotlin-dsl
+          rm -rf ~/.gradle/caches/*/kotlin
 
       - name: Build debug APK
-        run: gradle --no-daemon --no-build-cache clean assembleDebug --stacktrace
+        run: gradle --no-daemon --no-build-cache -Pkotlin.incremental=false clean assembleDebug --stacktrace
 
       - name: Verify APK
         run: |
