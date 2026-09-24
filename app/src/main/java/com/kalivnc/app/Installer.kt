@@ -17,6 +17,7 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 
 object Installer {
+    private object ProotRuntimeVersion { const val VALUE = "1.2.8" }
     fun rootfs(ctx: Context) = File(ctx.filesDir, "rootfs")
     private fun marker(ctx: Context, n: String) = File(ctx.filesDir, "markers/$n")
 
@@ -58,7 +59,7 @@ object Installer {
         val dir = File(ctx.applicationInfo.nativeLibraryDir)
         val missing = required.filterNot { File(dir, it).exists() }
         if (missing.isNotEmpty()) {
-            throw IOException("Moteur PRoot Android ${Config.PROOT_ENGINE_VERSION} absent de l'APK : ${missing.joinToString()}")
+            throw IOException("Moteur PRoot Android ${ProotRuntimeVersion.VALUE} absent de l'APK : ${missing.joinToString()}")
         }
         if (!ProotRunner.launcher(ctx).canExecute()) {
             throw IOException("Le moteur PRoot Android n'est pas exécutable depuis nativeLibraryDir.")
@@ -160,9 +161,9 @@ object Installer {
      * une erreur PRoot en faux message "apt code 255".
      */
     private fun verifyProot(ctx: Context) {
-        val probeMarker = marker(ctx, "proot-probe-${Config.PROOT_ENGINE_VERSION}")
+        val probeMarker = marker(ctx, "proot-probe-${ProotRuntimeVersion.VALUE}")
         if (probeMarker.exists()) return
-        KaliState.log("Diagnostic PRoot Android ${Config.PROOT_ENGINE_VERSION} : test du shell Kali…")
+        KaliState.log("Diagnostic PRoot Android ${ProotRuntimeVersion.VALUE} : test du shell Kali…")
         val p = ProotRunner.builder(
             ctx,
             """
