@@ -56,14 +56,17 @@ jobs:
           git show HEAD:app/src/main/java/com/kalivnc/app/Config.kt | grep 'PROROOT_ENGINE_VERSION = "1.2.8"'
           grep 'PROROOT_ENGINE_VERSION = "1.2.8"' app/src/main/java/com/kalivnc/app/Config.kt
 
-      - name: Clean workspace and Gradle caches
+      - name: Clean workspace
         run: |
           rm -rf .gradle app/build
-          rm -rf ~/.gradle/caches/8.11/kotlin-dsl
-          rm -rf ~/.gradle/caches/*/kotlin
 
       - name: Build debug APK
-        run: gradle --no-daemon --no-build-cache -Pkotlin.incremental=false clean assembleDebug --stacktrace
+        env:
+          GRADLE_USER_HOME: ${{ runner.temp }}/gradle-clean
+        run: |
+          rm -rf "$GRADLE_USER_HOME"
+          mkdir -p "$GRADLE_USER_HOME"
+          gradle --no-daemon --no-build-cache -Pkotlin.incremental=false clean assembleDebug --stacktrace
 
       - name: Verify APK
         run: |
