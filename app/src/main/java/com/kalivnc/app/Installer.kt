@@ -13,6 +13,7 @@ import java.io.IOException
 import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 import java.security.SecureRandom
 
 object Installer {
@@ -32,54 +33,108 @@ object Installer {
         return pw!!
     }
 
-    /** Installe tout ce qui manque (idempotent : chaque étape a un marqueur). */
+    /** Installe tout ce qui manque, avec des étapes idempotentes et vérifiées. */
     fun ensure(ctx: Context) {
         for (d in listOf("bin", "tmp", "markers", "dl")) File(ctx.filesDir, d).mkdirs()
         ensureProot(ctx)
         ensureRootfs(ctx)
         configureRootfs(ctx)
+        verifyProot(ctx)
         ensurePackages(ctx)
     }
 
     private fun ensureProot(ctx: Context) {
         val f = prootBin(ctx)
         if (!(f.exists() && f.length() > 100_000)) {
-            KaliState.log("Téléchargement de proot…")
+            KaliState.log("Téléchargement de PRoot ARM64…")
             download(Config.PROOT_URL, f, "proot")
-            val magic = ByteArray(4)
-            f.inputStream().use { it.read(magic) }
-            if (magic[0] != 0x7f.toByte() || magic[1] != 'E'.code.toByte()) {
-                f.delete()
-                throw IOException("Le fichier proot téléchargé n'est pas un exécutable (vérifie Config.PROOT_URL)")
+        }
+        validateProotElf(f)
+        f.setExecutable(true, false)
+    }
+
+    private fun validateProotElf(f: File) {
+        val h = ByteArray(20)
+        f.inputStream().use { inp ->
+            var off = 0
+            while (off < h.size) {
+                val n = inp.read(h, off, h.size - off)
+                if (n < 0) break
+                off += n
             }
         }
-        f.setExecutable(true, false)
+        if (h[0] != 0x7f.toByte() || h[1] != 'E'.code.toByte() ||
+            h[2] != 'L'.code.toByte() || h[3] != 'F'.code.toByte()) {
+            f.delete()
+            throw IOException("PRoot téléchargé invalide : ce n'est pas un ELF")
+        }
+        if (h[4].toInt() != 2) {
+            f.delete()
+            throw IOException("PRoot téléchargé invalide : ELF 64 bits attendu")
+        }
+        val machine = (h[18].toInt() and 0xff) or ((h[19].toInt() and 0xff) shl 8)
+        if (machine != 183) {
+            f.delete()
+            throw IOException("PRoot téléchargé invalide : ARM64 attendu (e_machine=$machine)")
+        }
     }
 
     private fun ensureRootfs(ctx: Context) {
         if (marker(ctx, "rootfs").exists()) return
         val arch = File(ctx.filesDir, "dl/rootfs.tar.xz")
-        if (!arch.exists()) {
-            KaliState.log("Téléchargement de Kali (plusieurs centaines de Mo)…")
-            download(Config.ROOTFS_URL, arch, "Kali")
+        val sums = File(ctx.filesDir, "dl/SHA256SUMS")
+        try {
+            if (!arch.exists()) {
+                KaliState.log("Téléchargement de Kali…")
+                download(Config.ROOTFS_URL, arch, "Kali")
+            }
+            KaliState.log("Vérification SHA-256 du rootfs…")
+            download(Config.ROOTFS_SHA256_URL, sums, "SHA256SUMS")
+            verifySha256(arch, sums, Config.ROOTFS_FILE_NAME)
+
+            val root = rootfs(ctx)
+            if (root.exists()) root.deleteRecursively()
+            root.mkdirs()
+            KaliState.log("Extraction du système Kali…")
+            extract(arch, root)
+            requireGuestLayout(root)
+            marker(ctx, "rootfs").writeText("ok")
+            arch.delete()
+            sums.delete()
+        } catch (e: Exception) {
+            marker(ctx, "rootfs").delete()
+            rootfs(ctx).deleteRecursively()
+            throw e
         }
-        val root = rootfs(ctx)
-        if (root.exists()) root.deleteRecursively()
-        root.mkdirs()
-        KaliState.log("Extraction du système Kali (quelques minutes)…")
-        extract(arch, root)
-        arch.delete()
-        marker(ctx, "rootfs").writeText("ok")
     }
 
-    /** Réglages nécessaires pour que apt/dpkg fonctionnent sous proot. */
+    private fun requireGuestLayout(root: File) {
+        val required = listOf(
+            File(root, "bin/bash"),
+            File(root, "usr/bin/env"),
+            File(root, "etc/apt"),
+            File(root, "root")
+        )
+        val missing = required.filterNot { it.exists() }
+        if (missing.isNotEmpty()) {
+            throw IOException("Rootfs incomplet : ${missing.joinToString { it.path }}")
+        }
+    }
+
+    /** Réglages nécessaires pour que apt/dpkg fonctionnent sous PRoot. */
     private fun configureRootfs(ctx: Context) {
         val r = rootfs(ctx)
-        File(r, "etc/resolv.conf").apply { delete(); parentFile?.mkdirs(); writeText("nameserver 1.1.1.1\nnameserver 8.8.8.8\n") }
+        File(r, "etc/resolv.conf").apply {
+            delete()
+            parentFile?.mkdirs()
+            writeText("nameserver 1.1.1.1\nnameserver 8.8.8.8\n")
+        }
         val hosts = File(r, "etc/hosts")
         if (!hosts.exists() || hosts.length() == 0L) hosts.writeText("127.0.0.1 localhost\n::1 localhost\n")
         File(r, "etc/apt/apt.conf.d").mkdirs()
-        File(r, "etc/apt/apt.conf.d/99-kalivnc").writeText("APT::Sandbox::User \"root\";\nAcquire::Retries \"3\";\n")
+        File(r, "etc/apt/apt.conf.d/99-kalivnc").writeText(
+            "APT::Sandbox::User \"root\";\nAcquire::Retries \"3\";\nDpkg::Use-Pty \"0\";\n"
+        )
         val pol = File(r, "usr/sbin/policy-rc.d")
         pol.parentFile?.mkdirs()
         pol.writeText("#!/bin/sh\nexit 101\n")
@@ -88,23 +143,64 @@ object Installer {
         File(r, "root").mkdirs()
     }
 
+    /**
+     * Teste PRoot dans le rootfs avant apt. Cela évite de transformer
+     * une erreur PRoot en faux message "apt code 255".
+     */
+    private fun verifyProot(ctx: Context) {
+        if (marker(ctx, "proot-probe").exists()) return
+        KaliState.log("Diagnostic PRoot : test du shell Kali…")
+        val p = ProotRunner.builder(
+            ctx,
+            """
+            echo "PRoot probe: start"
+            id
+            pwd
+            test -x /bin/bash
+            /bin/true
+            /bin/bash -c 'echo PRoot probe: bash OK'
+            echo "PRoot probe: success"
+            """.trimIndent()
+        ).start()
+
+        val output = buildString {
+            p.inputStream.bufferedReader().forEachLine {
+                KaliState.log(it)
+                appendLine(it)
+            }
+        }
+        val code = p.waitFor()
+        if (code != 0) {
+            throw IOException(
+                "PRoot a quitté avec le code $code. " +
+                    (output.lineSequence().lastOrNull { it.isNotBlank() } ?: "aucun message PRoot")
+            )
+        }
+        marker(ctx, "proot-probe").writeText("ok")
+    }
+
     private fun ensurePackages(ctx: Context) {
         if (marker(ctx, "packages").exists()) return
-        KaliState.log("Installation de XFCE + serveur VNC (10 à 30 min, connexion requise)…")
+        KaliState.log("Installation de XFCE + serveur VNC…")
         KaliState.setProgress(-1)
+
         val script = readAsset(ctx, "install-packages.sh").replace("__PKGS__", Config.APT_PACKAGES)
         val p = ProotRunner.builder(ctx, script).start()
         p.inputStream.bufferedReader().forEachLine { KaliState.log(it) }
         val code = p.waitFor()
-        if (code != 0) throw IOException("apt a échoué (code $code) — voir le journal ci-dessus")
+
+        if (code != 0) {
+            throw IOException("Installation Kali interrompue : PRoot/shell a quitté avec le code $code")
+        }
         marker(ctx, "packages").writeText("ok")
     }
 
-    /** Écrit le script de démarrage du bureau (mot de passe VNC + résolution). */
     fun prepareSession(ctx: Context, pw: String, w: Int, h: Int) {
         configureRootfs(ctx)
         val s = readAsset(ctx, "start-vnc.sh")
-            .replace("__PW__", pw).replace("__W__", w.toString()).replace("__H__", h.toString())
+            .replace("__PW__", pw)
+            .replace("__W__", w.toString())
+            .replace("__H__", h.toString())
             .replace("__PORT__", Config.VNC_PORT.toString())
         val f = File(rootfs(ctx), "root/start-vnc.sh")
         f.parentFile?.mkdirs()
@@ -114,8 +210,6 @@ object Installer {
 
     private fun readAsset(ctx: Context, name: String) =
         ctx.assets.open(name).bufferedReader().use { it.readText() }
-
-    // ---------------------------------------------------------------- téléchargement
 
     private fun download(url: String, dest: File, label: String) {
         val tmp = File(dest.path + ".part")
@@ -127,7 +221,7 @@ object Installer {
             conn.connectTimeout = 20_000
             conn.readTimeout = 30_000
             conn.instanceFollowRedirects = false
-            conn.setRequestProperty("User-Agent", "KaliVNC/1.0")
+            conn.setRequestProperty("User-Agent", "KaliVNC/1.1")
             val code = conn.responseCode
             if (code in 300..399) {
                 val loc = conn.getHeaderField("Location") ?: throw IOException("Redirection sans Location")
@@ -139,6 +233,7 @@ object Installer {
             if (code != 200) throw IOException("HTTP $code pour $u")
             break
         }
+
         val total = conn.contentLengthLong
         var last = -1
         conn.inputStream.use { inp ->
@@ -148,6 +243,7 @@ object Installer {
                 while (true) {
                     val n = inp.read(buf)
                     if (n < 0) break
+                    if (n == 0) continue
                     out.write(buf, 0, n)
                     done += n
                     if (total > 0) {
@@ -161,18 +257,50 @@ object Installer {
                 }
             }
         }
+        if (tmp.length() == 0L) throw IOException("Téléchargement vide pour $label")
         if (dest.exists()) dest.delete()
         if (!tmp.renameTo(dest)) throw IOException("Impossible de finaliser ${dest.name}")
         KaliState.setProgress(-1)
     }
 
-    // ---------------------------------------------------------------- extraction tar.xz
+    private fun verifySha256(file: File, sums: File, fileName: String) {
+        val expected = sums.readLines()
+            .map { it.trim() }
+            .firstOrNull { it.endsWith(" $fileName") || it.endsWith("*$fileName") }
+            ?.substringBefore(' ')
+            ?.lowercase()
+
+        if (expected.isNullOrBlank()) {
+            throw IOException("SHA-256 introuvable pour $fileName")
+        }
+
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { inp ->
+            val buf = ByteArray(1024 * 1024)
+            while (true) {
+                val n = inp.read(buf)
+                if (n < 0) break
+                if (n > 0) digest.update(buf, 0, n)
+            }
+        }
+        val actual = digest.digest().joinToString("") { "%02x".format(it) }
+        if (actual != expected) {
+            file.delete()
+            throw IOException("SHA-256 invalide pour $fileName")
+        }
+    }
 
     private class CountingStream(inp: InputStream) : FilterInputStream(inp) {
         var count = 0L
-        override fun read(): Int { val r = super.read(); if (r >= 0) count++; return r }
+        override fun read(): Int {
+            val r = super.read()
+            if (r >= 0) count++
+            return r
+        }
         override fun read(b: ByteArray, off: Int, len: Int): Int {
-            val r = super.read(b, off, len); if (r > 0) count += r; return r
+            val r = super.read(b, off, len)
+            if (r > 0) count += r
+            return r
         }
     }
 
@@ -194,11 +322,15 @@ object Installer {
         val total = archive.length()
         val counting = CountingStream(BufferedInputStream(FileInputStream(archive), 1 shl 16))
         var last = -1
+        var failures = 0
+
         TarArchiveInputStream(XZCompressorInputStream(counting)).use { tar ->
             while (true) {
                 val e = tar.nextTarEntry ?: break
                 val name = stripTop(e.name).trimEnd('/')
-                if (name.isEmpty() || name.split('/').any { it == ".." }) continue
+                if (name.isEmpty()) continue
+                if (name.split('/').any { it == ".." }) throw IOException("Entrée tar dangereuse : $name")
+
                 val out = File(dest, name)
                 try {
                     when {
@@ -215,7 +347,8 @@ object Installer {
                             out.parentFile?.mkdirs()
                             out.delete()
                             val target = File(dest, stripTop(e.linkName))
-                            try { Os.link(target.path, out.path) } catch (_: Exception) { target.copyTo(out, true) }
+                            try { Os.link(target.path, out.path) }
+                            catch (_: Exception) { target.copyTo(out, true) }
                         }
                         e.isFile -> {
                             out.parentFile?.mkdirs()
@@ -223,17 +356,25 @@ object Installer {
                             FileOutputStream(out).use { tar.copyTo(it, 64 * 1024) }
                             chmod(out, (e.mode and 0x1FF) or 0x180)
                         }
-                        else -> { /* périphériques, fifo : ignorés */ }
+                        else -> {
+                            // Périphériques/FIFO/sockets non nécessaires à ce rootfs utilisateur.
+                        }
                     }
                 } catch (ex: Exception) {
-                    KaliState.log("Ignoré : $name (${ex.message})")
+                    failures++
+                    KaliState.log("Extraction impossible : $name (${ex.message})")
                 }
+
                 if (total > 0) {
                     val pct = (counting.count * 100 / total).toInt().coerceIn(0, 100)
-                    if (pct != last) { last = pct; KaliState.setProgress(pct) }
+                    if (pct != last) {
+                        last = pct
+                        KaliState.setProgress(pct)
+                    }
                 }
             }
         }
         KaliState.setProgress(-1)
+        if (failures > 0) throw IOException("Extraction du rootfs incomplète : $failures entrée(s) en erreur")
     }
 }
