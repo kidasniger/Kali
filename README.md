@@ -1,46 +1,34 @@
 # Kali VNC (Android)
 
-Appli Android **tout-en-un** : au lancement elle démarre Kali NetHunter (rootfs Kali sous **proot**, sans root)
-et un serveur **VNC** en arrière-plan, puis n'affiche **que le bureau Kali en plein écran**.
-Le client VNC est écrit en Kotlin et compilé dans l'APK : pas de Termux, pas d'appli VNC séparée.
+Kali VNC installe un rootfs Kali NetHunter minimal ARM64, puis démarre XFCE +
+TigerVNC dans un environnement Linux sans root et affiche le bureau en plein écran.
 
-## Compiler l'APK (GitHub Actions)
+## Moteur Android
 
-1. Crée un dépôt GitHub et pousse tout le contenu de ce dossier (branche `main`).
-2. Onglet **Actions** → workflow *Build APK* (il se lance tout seul au push).
-3. Quand il est vert : ouvre l'exécution → section **Artifacts** → télécharge `KaliVNC-debug-apk`.
-4. Installe l'APK sur le téléphone (autoriser les sources inconnues).
+La version précédente exécutait un binaire PRoot Linux téléchargé dans `filesDir`.
+La version actuelle utilise les bibliothèques officielles **proroot 1.2.8** intégrées
+à l'APK et exécutées depuis `nativeLibraryDir`.
+
+Le projet proroot documente ce mode Android, le support d'APT et les tests XFCE/VNC.
+Source : https://github.com/coderredlab/proroot
 
 ## Premier lancement
 
-- Connexion Internet + ~3 Go libres. L'appli télécharge proot et Kali, extrait le système, puis
-  installe XFCE + TigerVNC via `apt` (10 à 30 min). Un journal s'affiche pendant ce temps.
-- Ensuite chaque lancement va directement au bureau (10-20 s).
-- Le service tourne au premier plan (notification avec bouton **Arrêter**).
+- Internet + plusieurs Go libres.
+- Le rootfs Kali est téléchargé puis vérifié par SHA-256 avant extraction.
+- Un probe PRoot vérifie `/bin/bash`, `/bin/true` et le répertoire `/root` avant `apt`.
+- Le serveur VNC reste limité à `127.0.0.1`.
 
-## Utilisation
+## Diagnostic
 
-| Geste | Action |
-|---|---|
-| Toucher | Clic gauche |
-| Appui long / 2 doigts (tap) | Clic droit |
-| Glisser (1 doigt) | Glisser-déposer / sélection |
-| Glisser (2 doigts) | Défilement |
-| Tap à 3 doigts ou bouton Retour | Afficher/masquer le clavier + barre Esc/Tab/Ctrl/Alt/flèches |
+Le journal natif PRoot est conservé dans `filesDir/proroot-runtime.log`.
+En cas d'échec, l'application affiche aussi les dernières lignes de ce journal.
 
-## Réglages (`Config.kt`)
+## Attribution
 
-- `PROOT_URL` : binaire proot statique arm64. **Si le téléchargement échoue, change cette URL.**
-- `ROOTFS_URL` / `ROOTFS_TOP_DIR` : rootfs Kali NetHunter (minimal par défaut).
-- `MAX_DESKTOP_WIDTH` : résolution du bureau (plus petit = plus fluide).
-- `APT_PACKAGES` : paquets installés au premier lancement (ajoute `kali-tools-top10` pour les outils Kali).
+Kali VNC utilise **proroot 1.2.8**, bibliothèques ARM64 officielles non modifiées.
+Voir `THIRD_PARTY_NOTICES.md`.
 
 ## Limites
 
-- Sans root : pas de mode monitor Wi-Fi, pas d'injection de paquets ni d'attaques HID.
-- `targetSdk = 28` volontaire (comme Termux) pour pouvoir exécuter proot depuis le stockage interne.
-  Distribution par APK/GitHub uniquement, pas Google Play.
-- Android 12+ : le « phantom process killer » peut tuer les processus enfants ; le service au premier plan aide,
-  sinon désactive-le via ADB : `adb shell settings put global settings_enable_monitor_phantom_procs false`.
-- Le serveur VNC n'écoute que sur `127.0.0.1` et est protégé par un mot de passe aléatoire.
-- À utiliser uniquement sur des systèmes que tu possèdes ou pour lesquels tu as une autorisation.
+Sans root Android, certaines fonctions matérielles de Kali/NetHunter ne sont pas disponibles.
