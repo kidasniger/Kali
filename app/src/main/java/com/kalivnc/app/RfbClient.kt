@@ -1,0 +1,224 @@
+package com.kalivnc.app
+
+import android.graphics.Bitmap
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
+import java.io.DataInputStream
+import java.io.IOException
+import java.io.OutputStream
+import java.net.InetSocketAddress
+import java.net.Socket
+import java.nio.ByteBuffer
+import java.util.concurrent.Executors
+import javax.crypto.Cipher
+import javax.crypto.spec.SecretKeySpec
+
+/**
+ * Client VNC (protocole RFB 3.8) minimal, intégré à l'APK : authentification VNC,
+ * encodage Raw, redimensionnement du bureau. Le serveur ne tourne qu'en local (127.0.0.1).
+ */
+class RfbClient(
+    private val host: String,
+    private val port: Int,
+    private val password: String,
+    private val cb: Callback
+) {
+    interface Callback {
+        fun onReady(c: RfbClient, w: Int, h: Int)
+        fun onUpdate(c: RfbClient)
+        fun onClosed(c: RfbClient, reason: String)
+    }
+
+    val lock = Any()
+    @Volatile var bitmap: Bitmap? = null
+    @Volatile var fbW = 0
+    @Volatile var fbH = 0
+
+    @Volatile private var closedByUs = false
+    private var socket: Socket? = null
+    private val sender = Executors.newSingleThreadExecutor()
+    @Volatile private var out: OutputStream? = null
+
+    fun start() {
+        Thread({ runLoop() }, "rfb-reader").start()
+    }
+
+    fun close() {
+        closedByUs = true
+        try { socket?.close() } catch (_: Exception) { }
+        sender.shutdownNow()
+    }
+
+    // ------------------------------------------------------------- envoi (sérialisé)
+
+    private fun send(b: ByteArray) {
+        if (closedByUs) return
+        try {
+            sender.execute {
+                try { out?.write(b); out?.flush() } catch (_: Exception) { }
+            }
+        } catch (_: Exception) { }
+    }
+
+    fun sendKey(keysym: Int, down: Boolean) {
+        val b = ByteBuffer.allocate(8)
+        b.put(4.toByte()); b.put((if (down) 1 else 0).toByte()); b.putShort(0); b.putInt(keysym)
+        send(b.array())
+    }
+
+    fun sendPointer(x: Int, y: Int, mask: Int) {
+        val b = ByteBuffer.allocate(6)
+        b.put(5.toByte()); b.put(mask.toByte()); b.putShort(x.toShort()); b.putShort(y.toShort())
+        send(b.array())
+    }
+
+    private fun requestUpdate(incremental: Boolean) {
+        val b = ByteBuffer.allocate(10)
+        b.put(3.toByte()); b.put((if (incremental) 1 else 0).toByte())
+        b.putShort(0); b.putShort(0); b.putShort(fbW.toShort()); b.putShort(fbH.toShort())
+        send(b.array())
+    }
+
+    // ------------------------------------------------------------- boucle de lecture
+
+    private fun runLoop() {
+        var reason = "Connexion fermée"
+        try {
+            val s = Socket()
+            s.tcpNoDelay = true
+            s.connect(InetSocketAddress(host, port), 5000)
+            socket = s
+            val inp = DataInputStream(BufferedInputStream(s.getInputStream(), 1 shl 16))
+            val o = BufferedOutputStream(s.getOutputStream())
+
+            // Version
+            inp.readFully(ByteArray(12))
+            o.write("RFB 003.008\n".toByteArray()); o.flush()
+
+            // Sécurité : on exige "VNC Authentication" (type 2)
+            val n = inp.readUnsignedByte()
+            if (n == 0) {
+                val m = ByteArray(inp.readInt()); inp.readFully(m)
+                throw IOException(String(m))
+            }
+            val types = ByteArray(n); inp.readFully(types)
+            if (!types.contains(2.toByte())) throw IOException("Authentification VNC non proposée par le serveur")
+            o.write(2); o.flush()
+            val challenge = ByteArray(16); inp.readFully(challenge)
+            o.write(desResponse(challenge)); o.flush()
+            if (inp.readInt() != 0) throw IOException("Mot de passe VNC refusé")
+
+            // ClientInit (partagé) puis ServerInit
+            o.write(1); o.flush()
+            val w = inp.readUnsignedShort()
+            val h = inp.readUnsignedShort()
+            inp.readFully(ByteArray(16))                 // format de pixels du serveur (ignoré)
+            inp.readFully(ByteArray(inp.readInt()))      // nom du bureau
+            resize(w, h)
+
+            // À partir d'ici, toutes les écritures passent par le thread d'envoi.
+            out = o
+
+            // Format de pixels imposé : 32 bits, 0x00RRGGBB, little-endian
+            val pf = ByteBuffer.allocate(20)
+            pf.put(0.toByte()); pf.put(ByteArray(3))
+            pf.put(32.toByte()); pf.put(24.toByte()); pf.put(0.toByte()); pf.put(1.toByte())
+            pf.putShort(255); pf.putShort(255); pf.putShort(255)
+            pf.put(16.toByte()); pf.put(8.toByte()); pf.put(0.toByte()); pf.put(ByteArray(3))
+            send(pf.array())
+
+            // Encodages : Raw + DesktopSize
+            val enc = ByteBuffer.allocate(12)
+            enc.put(2.toByte()); enc.put(0.toByte()); enc.putShort(2)
+            enc.putInt(0); enc.putInt(-223)
+            send(enc.array())
+
+            cb.onReady(this, w, h)
+            requestUpdate(false)
+
+            while (!closedByUs) {
+                when (val t = inp.readUnsignedByte()) {
+                    0 -> {
+                        inp.readUnsignedByte()
+                        val rects = inp.readUnsignedShort()
+                        var resized = false
+                        repeat(rects) {
+                            val x = inp.readUnsignedShort()
+                            val y = inp.readUnsignedShort()
+                            val rw = inp.readUnsignedShort()
+                            val rh = inp.readUnsignedShort()
+                            when (val e = inp.readInt()) {
+                                0 -> readRaw(inp, x, y, rw, rh)
+                                -223 -> { resize(rw, rh); resized = true; cb.onReady(this, rw, rh) }
+                                else -> throw IOException("Encodage VNC non pris en charge : $e")
+                            }
+                        }
+                        cb.onUpdate(this)
+                        requestUpdate(!resized)
+                    }
+                    1 -> { inp.readUnsignedByte(); inp.readUnsignedShort(); val nc = inp.readUnsignedShort(); skip(inp, nc * 6L) }
+                    2 -> { /* bell */ }
+                    3 -> { inp.readFully(ByteArray(3)); skip(inp, inp.readInt().toLong() and 0xFFFFFFFFL) }
+                    else -> throw IOException("Message serveur inconnu : $t")
+                }
+            }
+        } catch (e: Exception) {
+            if (!closedByUs) reason = e.message ?: e.javaClass.simpleName
+        } finally {
+            try { socket?.close() } catch (_: Exception) { }
+            sender.shutdown()
+            if (!closedByUs) cb.onClosed(this, reason)
+        }
+    }
+
+    private fun skip(inp: DataInputStream, n: Long) {
+        var left = n
+        val buf = ByteArray(8192)
+        while (left > 0) {
+            val r = inp.read(buf, 0, minOf(left, buf.size.toLong()).toInt())
+            if (r < 0) throw IOException("Flux interrompu")
+            left -= r
+        }
+    }
+
+    private fun resize(w: Int, h: Int) {
+        val nb = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        synchronized(lock) { bitmap = nb }
+        fbW = w
+        fbH = h
+    }
+
+    private fun readRaw(inp: DataInputStream, x: Int, y: Int, w: Int, h: Int) {
+        val bmp = bitmap ?: throw IOException("Pas de framebuffer")
+        if (x + w > bmp.width || y + h > bmp.height) throw IOException("Rectangle hors de l'écran")
+        val buf = ByteArray(w * h * 4)
+        inp.readFully(buf)
+        val px = IntArray(w * h)
+        var p = 0
+        for (i in px.indices) {
+            px[i] = -0x1000000 or
+                ((buf[p + 2].toInt() and 0xFF) shl 16) or
+                ((buf[p + 1].toInt() and 0xFF) shl 8) or
+                (buf[p].toInt() and 0xFF)
+            p += 4
+        }
+        synchronized(lock) { bmp.setPixels(px, 0, w, x, y, w, h) }
+    }
+
+    // ------------------------------------------------------------- authentification DES
+
+    private fun reverseBits(b: Int): Byte {
+        var x = b and 0xFF
+        var r = 0
+        repeat(8) { r = (r shl 1) or (x and 1); x = x shr 1 }
+        return r.toByte()
+    }
+
+    private fun desResponse(challenge: ByteArray): ByteArray {
+        val pw = password.toByteArray(Charsets.ISO_8859_1)
+        val key = ByteArray(8) { i -> if (i < pw.size) reverseBits(pw[i].toInt()) else 0 }
+        val c = Cipher.getInstance("DES/ECB/NoPadding")
+        c.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "DES"))
+        return c.doFinal(challenge)
+    }
+}
