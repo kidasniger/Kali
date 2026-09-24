@@ -5,3 +5,4 @@ local.properties
 .idea/
 captures/
 *.apk
+app/src/main/jniLibs/arm64-v8a/*
