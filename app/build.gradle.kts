@@ -11,8 +11,8 @@ android {
         applicationId = "com.kalivnc.app"
         minSdk = 26
         targetSdk = 28
-        versionCode = 13
-        versionName = "2.0"
+        versionCode = 14
+        versionName = "2.1"
     }
 
     buildTypes {
