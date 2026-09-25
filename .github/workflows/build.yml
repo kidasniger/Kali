@@ -29,44 +29,30 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Fetch Android PRoot engine
+      - name: Build patched Android PRoot backend
         run: bash scripts/fetch-proroot.sh
 
-      - name: Verify sources and native runtime
+      - name: Verify sources and backend
         run: |
           set -e
           test -f settings.gradle.kts
           test -f build.gradle.kts
           test -f app/build.gradle.kts
           test -f app/src/main/AndroidManifest.xml
-          test -f app/src/main/java/com/kalivnc/app/Config.kt
-          grep -q 'PROROOT_ENGINE_VERSION = "1.2.8"' app/src/main/java/com/kalivnc/app/Config.kt
-          grep -q 'PROROOT_LIBRARY = "libproroot.so"' app/src/main/java/com/kalivnc/app/Config.kt
-          grep -q 'versionCode = 9' app/build.gradle.kts
-          grep -q 'versionName = "1.6"' app/build.gradle.kts
-          grep -q 'versionName = "1.6"' app/build.gradle.kts
-          grep -q -- '--no-static-loader' app/src/main/java/com/kalivnc/app/ProotRunner.kt
-          grep -q '/bin/sh' app/src/main/java/com/kalivnc/app/ProotRunner.kt
-          ! grep -q -- '"-b", "/dev' app/src/main/java/com/kalivnc/app/ProotRunner.kt
-          ! grep -q -- '"-b", "/proc' app/src/main/java/com/kalivnc/app/ProotRunner.kt
-          ! grep -q -- '"-b", "/sys' app/src/main/java/com/kalivnc/app/ProotRunner.kt
+          grep -q 'versionCode = 10' app/build.gradle.kts
+          grep -q 'versionName = "1.7"' app/build.gradle.kts
+          grep -q 'PROOT_LOADER' app/src/main/java/com/kalivnc/app/ProotRunner.kt
+          grep -q 'PROOT_NO_SECCOMP' app/src/main/java/com/kalivnc/app/ProotRunner.kt
+          grep -q 'PROOT_TMP_DIR' app/src/main/java/com/kalivnc/app/ProotRunner.kt
           test -f app/src/main/assets/install-packages.sh
           test -f app/src/main/assets/start-vnc.sh
-          test -f scripts/fetch-proroot.sh
+          test -f app/src/main/jniLibs/arm64-v8a/libproot.so
+          test -f app/src/main/jniLibs/arm64-v8a/libproot-loader.so
+          ! find app/src/main/jniLibs/arm64-v8a -maxdepth 1 -type f -name 'libproroot-*.so' | grep -q .
           bash -n scripts/fetch-proroot.sh
-          find app/src/main/jniLibs/arm64-v8a -maxdepth 1 -type f -print | sort
-
-      - name: Verify checked-out commit
-        run: |
-          set -e
-          echo "HEAD=$(git rev-parse HEAD)"
-          git status --short
-          git show HEAD:app/src/main/java/com/kalivnc/app/Config.kt | grep 'PROROOT_ENGINE_VERSION = "1.2.8"'
-          grep 'PROROOT_ENGINE_VERSION = "1.2.8"' app/src/main/java/com/kalivnc/app/Config.kt
 
       - name: Clean workspace
-        run: |
-          rm -rf .gradle app/build
+        run: rm -rf .gradle app/build
 
       - name: Build debug APK
         env:
@@ -83,7 +69,11 @@ jobs:
           ls -lh "$APK"
           file "$APK"
           unzip -t "$APK" >/dev/null
-          unzip -l "$APK" | grep -E 'lib/arm64-v8a/libproroot(-runtime|-linker|-bridge|-stub-loader)?\.so' | sort
+          unzip -l "$APK" | grep -E 'lib/arm64-v8a/libproot(-loader)?\.so' | sort
+          if unzip -l "$APK" | grep -E 'lib/arm64-v8a/libproroot(-runtime|-linker|-bridge|-stub-loader)?\.so'; then
+            echo "ERROR: legacy proroot 1.2.8 libraries remain in APK"
+            exit 1
+          fi
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -97,15 +87,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG=v1.6
+          TAG=v1.7
           APK=$(find app/build/outputs/apk/debug -type f -name '*.apk' | head -n1)
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $TAG already exists; updating APK asset."
             gh release upload "$TAG" "$APK" --repo "$GITHUB_REPOSITORY" --clobber
           else
-            echo "Creating release $TAG."
             gh release create "$TAG" "$APK" \
               --repo "$GITHUB_REPOSITORY" \
               --title "Kali VNC $TAG" \
-              --notes "Kali VNC $TAG : invocation Android proroot minimale, sans binds /dev-/proc-/sys, shell /bin/sh, et repli automatique sans static-loader en cas de SIGSEGV."
+              --notes "Kali VNC $TAG : backend PRoot Android statique patché, loader dédié nativeLibraryDir et PROOT_NO_SECCOMP=1."
           fi

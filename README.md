@@ -1,37 +1,38 @@
 # Kali VNC (Android)
 
 Kali VNC installe un rootfs Kali NetHunter minimal ARM64, puis démarre XFCE +
-TigerVNC dans un environnement Linux sans root et affiche le bureau en plein écran.
+TigerVNC dans un environnement Linux sans root.
 
-## Moteur Android
+## Backend Linux Android
 
-La version actuelle utilise les bibliothèques officielles **proroot 1.2.8** intégrées
-à l'APK et exécutées depuis `nativeLibraryDir`.
+À partir de la v1.7, l'application utilise un PRoot Android statique compilé
+à partir du fork Android de la chaîne Termux/PRoot.
 
-L'invocation Android suit le modèle documenté par proroot : rootfs + uid 0 + link2symlink +
-working directory, sans bind global de `/dev`, `/proc` ou `/sys`. Le shell de lancement est
-`/bin/sh`. Si un appareil provoque un SIGSEGV avec le mode static-loader adaptatif, le probe
-retente automatiquement avec `--no-static-loader` et mémorise le mode validé pour les lancements suivants.
+Le launcher configure :
 
-Source : https://github.com/coderredlab/proroot
+- `PROOT_LOADER=<nativeLibraryDir>/libproot-loader.so`
+- `PROOT_NO_SECCOMP=1`
+- `PROOT_TMP_DIR=<filesDir>/tmp`
+- `TMPDIR=<filesDir>/tmp`
+
+Puis exécute :
+
+`proot -r <rootfs> -0 --link2symlink -w /root /bin/sh -c <commande>`
+
+Le loader séparé évite d'exécuter un ELF du rootfs depuis un répertoire
+writable de l'application.
+
+Source du backend :
+https://github.com/oonid/pr/tree/fcf25cb2396361f0be2edfc96fdd61a6e738c9d9
 
 ## Premier lancement
 
 - Internet + plusieurs Go libres.
 - Le rootfs Kali est téléchargé puis vérifié par SHA-256 avant extraction.
-- Un probe PRoot vérifie `/bin/sh`, `/bin/bash`, `/bin/true` et le répertoire `/root` avant `apt`.
+- Un probe PRoot vérifie le shell, l'architecture ARM64 et le chemin de travail
+  avant `apt`.
 - Le serveur VNC reste limité à `127.0.0.1`.
-
-## Diagnostic
-
-Le journal natif PRoot est conservé dans `filesDir/proroot-runtime.log`.
-En cas d'échec, l'application affiche les dernières lignes de ce journal.
 
 ## Attribution
 
-Kali VNC utilise **proroot 1.2.8**, bibliothèques ARM64 officielles non modifiées.
-Voir `THIRD_PARTY_NOTICES.md`.
-
-## Limites
-
-Sans root Android, certaines fonctions matérielles de Kali/NetHunter ne sont pas disponibles.
+PRoot est distribué sous GPL-2.0-or-later ; voir `THIRD_PARTY_NOTICES.md`.

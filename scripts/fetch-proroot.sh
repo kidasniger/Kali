@@ -1,24 +1,44 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="1.2.8"
-BASE="https://github.com/coderredlab/proroot/releases/download/v${VERSION}"
+# Build and pin the Android PRoot backend from oonid/pr.
+# PRoot derives from upstream PRoot + the Termux Android fork and
+# includes Android W^X, loader and seccomp compatibility fixes.
+SRC_COMMIT="fcf25cb2396361f0be2edfc96fdd61a6e738c9d9"
+WORK="${RUNNER_TEMP:-/tmp}/kali-proot-src"
 DEST="app/src/main/jniLibs/arm64-v8a"
-mkdir -p "$DEST"
 
-declare -A SHA=(
-  [libproroot.so]="a4e74d75b66cdc02b080adfe863dbf9951c3b30610d77beddc95488d5fe5de01"
-  [libproroot-runtime.so]="8c47a0a7db32d84c179ebb5bf3640f655a3181860ece5886ae44d92858730c34"
-  [libproroot-bridge.so]="1c5bc9537a270e8bf8b1c70222813f57b60b828bfb5503ddf8fe37685092de2f"
-  [libproroot-linker.so]="51a0ec5bfed00e572a0de09e22d9057e2befc386b78e426613d3e0ab03f4ecee"
-  [libproroot-stub-loader.so]="06c6624db3bdc45b9ced151cd781df439a37b47731d244b93e9d6a58cd48cde0"
-)
+rm -rf "$WORK"
+mkdir -p "$WORK" "$DEST"
 
-for name in "${!SHA[@]}"; do
-  echo "Downloading proroot $name..."
-  curl --fail --location --retry 3 --connect-timeout 20 --max-time 120 "$BASE/$name" -o "$DEST/$name"
-  echo "${SHA[$name]}  $DEST/$name" | sha256sum -c -
-  chmod 755 "$DEST/$name"
-done
+git clone --recurse-submodules --depth 1 https://github.com/oonid/pr.git "$WORK"
+git -C "$WORK" fetch --depth 1 origin "$SRC_COMMIT"
+git -C "$WORK" checkout --detach "$SRC_COMMIT"
+git -C "$WORK" submodule update --init --recursive
 
-echo "Android PRoot engine ${VERSION} verified."
+bash "$WORK/scripts/build.sh" --arch=arm64
+
+PROOT="$WORK/build/out/arm64/proot"
+LOADER="$WORK/build/out/arm64/loader"
+
+test -f "$PROOT"
+test -f "$LOADER"
+
+# Delete every old proroot 1.2.8 runtime library from the build workspace.
+rm -f "$DEST"/libproroot-runtime.so "$DEST"/libproroot-linker.so       "$DEST"/libproroot-bridge.so "$DEST"/libproroot-stub-loader.so
+
+cp "$PROOT" "$DEST/libproot.so"
+cp "$LOADER" "$DEST/libproot-loader.so"
+chmod 755 "$DEST/libproot.so" "$DEST/libproot-loader.so"
+
+file "$DEST/libproot.so"
+file "$DEST/libproot-loader.so"
+readelf -h "$DEST/libproot.so" | grep -E 'Class|Machine|Type'
+readelf -h "$DEST/libproot-loader.so" | grep -E 'Class|Machine|Type'
+
+if readelf -d "$DEST/libproot.so" 2>/dev/null | grep -q NEEDED; then
+  echo "ERROR: libproot.so has dynamic dependencies."
+  exit 1
+fi
+
+echo "Android PRoot backend built and verified."

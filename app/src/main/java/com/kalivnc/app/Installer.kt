@@ -17,8 +17,8 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 
 object Installer {
-    private object ProotRuntimeVersion { const val VALUE = "1.2.8" }
-    private const val APP_RUNTIME_VERSION = "1.6"
+    private object ProotRuntimeVersion { const val VALUE = "5.4.0-pr" }
+    private const val APP_RUNTIME_VERSION = "1.7"
 
     fun rootfs(ctx: Context) = File(ctx.filesDir, "rootfs")
     private fun marker(ctx: Context, n: String) = File(ctx.filesDir, "markers/$n")
@@ -45,51 +45,25 @@ object Installer {
     }
 
     private fun ensureNativeRuntime(ctx: Context) {
-        val legacy = File(ctx.filesDir, "bin/proot")
-        val part = File(ctx.filesDir, "bin/proot.part")
-        if (legacy.exists()) legacy.delete()
-        if (part.exists()) part.delete()
+        listOf(
+            File(ctx.filesDir, "bin/proot"),
+            File(ctx.filesDir, "bin/proot.part"),
+            File(ctx.filesDir, "bin/libproroot.so")
+        ).forEach { if (it.exists()) it.delete() }
 
-        val required = listOf(
-            "libproroot.so",
-            "libproroot-runtime.so",
-            "libproroot-linker.so",
-            "libproroot-bridge.so",
-            "libproroot-stub-loader.so"
-        )
         val dir = File(ctx.applicationInfo.nativeLibraryDir)
+        val required = listOf("libproot.so", "libproot-loader.so")
         val missing = required.filterNot { File(dir, it).exists() }
         if (missing.isNotEmpty()) {
-            throw IOException("Moteur PRoot Android ${ProotRuntimeVersion.VALUE} absent de l'APK : ${missing.joinToString()}")
+            throw IOException(
+                "Moteur PRoot Android ${ProotRuntimeVersion.VALUE} absent de l'APK : ${missing.joinToString()}"
+            )
         }
         if (!ProotRunner.launcher(ctx).canExecute()) {
             throw IOException("Le moteur PRoot Android n'est pas exécutable depuis nativeLibraryDir.")
         }
-    }
-
-    private fun validateProotElf(f: File) {
-        val h = ByteArray(20)
-        f.inputStream().use { inp ->
-            var off = 0
-            while (off < h.size) {
-                val n = inp.read(h, off, h.size - off)
-                if (n < 0) break
-                off += n
-            }
-        }
-        if (h[0] != 0x7f.toByte() || h[1] != 'E'.code.toByte() ||
-            h[2] != 'L'.code.toByte() || h[3] != 'F'.code.toByte()) {
-            f.delete()
-            throw IOException("PRoot téléchargé invalide : ce n'est pas un ELF")
-        }
-        if (h[4].toInt() != 2) {
-            f.delete()
-            throw IOException("PRoot téléchargé invalide : ELF 64 bits attendu")
-        }
-        val machine = (h[18].toInt() and 0xff) or ((h[19].toInt() and 0xff) shl 8)
-        if (machine != 183) {
-            f.delete()
-            throw IOException("PRoot téléchargé invalide : ARM64 attendu (e_machine=$machine)")
+        if (!File(dir, "libproot-loader.so").canExecute()) {
+            throw IOException("Le loader PRoot Android n'est pas exécutable depuis nativeLibraryDir.")
         }
     }
 
@@ -192,37 +166,38 @@ object Installer {
         if (probeMarker.exists()) return
 
         KaliState.log("Diagnostic PRoot Android ${ProotRuntimeVersion.VALUE} : test du shell Kali…")
-        val adaptive = runProotProbe(ctx, noStaticLoader = false)
+        val p = ProotRunner.builder(
+            ctx,
+            """
+            export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+            echo "PRoot probe: start"
+            id
+            pwd
+            uname -m
+            test -x /bin/sh
+            test -x /bin/bash
+            /bin/true
+            /bin/sh -c 'echo PRoot probe: sh OK'
+            echo "PRoot probe: success"
+            """.trimIndent()
+        ).start()
 
-        if (adaptive.code == 0) {
-            marker(ctx, "proot-mode-1.6").writeText("adaptive")
-            probeMarker.writeText("ok")
-            KaliState.log("PRoot : mode adaptatif validé.")
-            return
-        }
-
-        if (adaptive.code == 139) {
-            KaliState.log("PRoot : SIGSEGV détecté avec le mode adaptatif, nouvel essai sans static-loader…")
-            val fallback = runProotProbe(ctx, noStaticLoader = true)
-            if (fallback.code == 0) {
-                marker(ctx, "proot-mode-1.6").writeText("no-static-loader")
-                probeMarker.writeText("ok")
-                KaliState.log("PRoot : mode sans static-loader validé.")
-                return
+        val output = buildString {
+            p.inputStream.bufferedReader().forEachLine {
+                KaliState.log(it)
+                appendLine(it)
             }
+        }
+        val code = p.waitFor()
+        if (code != 0) {
             throw IOException(
-                "PRoot Android a échoué deux fois. Premier code ${adaptive.code}, second code ${fallback.code}." +
-                    "\n--- premier essai ---\n${adaptive.output.trim()}" +
-                    "\n--- second essai ---\n${fallback.output.trim()}" +
-                    "\n${ProotRunner.diagnostics(ctx)}"
+                "PRoot Android a quitté avec le code $code. " +
+                    (output.lineSequence().lastOrNull { it.isNotBlank() } ?: "aucun message PRoot") +
+                    "\n" + ProotRunner.diagnostics(ctx)
             )
         }
-
-        throw IOException(
-            "PRoot Android a quitté avec le code ${adaptive.code}. " +
-                (adaptive.output.lineSequence().lastOrNull { it.isNotBlank() } ?: "aucun message PRoot") +
-                "\n" + ProotRunner.diagnostics(ctx)
-        )
+        probeMarker.writeText("ok")
+        KaliState.log("PRoot : backend Android validé.")
     }
 
     private fun ensurePackages(ctx: Context) {
