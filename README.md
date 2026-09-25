@@ -25,7 +25,7 @@ writable de l'application.
 Source du backend :
 https://github.com/oonid/pr/tree/fcf25cb2396361f0be2edfc96fdd61a6e738c9d9
 
-## Premier lancement
+## VNC\n\nLa version 1.9 installe explicitement `tigervnc-tools`, qui fournit `vncpasswd`, puis vérifie `Xtigervnc`, `vncpasswd/tigervncpasswd` et `startxfce4` avant de déclarer l’installation terminée. citeturn656190search5turn419820search1\n\n## Premier lancement
 
 - Internet + plusieurs Go libres.
 - Le rootfs Kali est téléchargé puis vérifié par SHA-256 avant extraction.
