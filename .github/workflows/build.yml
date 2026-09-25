@@ -42,8 +42,14 @@ jobs:
           test -f app/src/main/java/com/kalivnc/app/Config.kt
           grep -q 'PROROOT_ENGINE_VERSION = "1.2.8"' app/src/main/java/com/kalivnc/app/Config.kt
           grep -q 'PROROOT_LIBRARY = "libproroot.so"' app/src/main/java/com/kalivnc/app/Config.kt
-          grep -q 'versionCode = 8' app/build.gradle.kts
-          grep -q 'versionName = "1.5"' app/build.gradle.kts
+          grep -q 'versionCode = 9' app/build.gradle.kts
+          grep -q 'versionName = "1.6"' app/build.gradle.kts
+          grep -q 'versionName = "1.6"' app/build.gradle.kts
+          grep -q -- '--no-static-loader' app/src/main/java/com/kalivnc/app/ProotRunner.kt
+          grep -q '/bin/sh' app/src/main/java/com/kalivnc/app/ProotRunner.kt
+          ! grep -q -- '"-b", "/dev' app/src/main/java/com/kalivnc/app/ProotRunner.kt
+          ! grep -q -- '"-b", "/proc' app/src/main/java/com/kalivnc/app/ProotRunner.kt
+          ! grep -q -- '"-b", "/sys' app/src/main/java/com/kalivnc/app/ProotRunner.kt
           test -f app/src/main/assets/install-packages.sh
           test -f app/src/main/assets/start-vnc.sh
           test -f scripts/fetch-proroot.sh
@@ -91,7 +97,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG=v1.5
+          TAG=v1.6
           APK=$(find app/build/outputs/apk/debug -type f -name '*.apk' | head -n1)
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Release $TAG already exists; updating APK asset."
@@ -101,5 +107,5 @@ jobs:
             gh release create "$TAG" "$APK" \
               --repo "$GITHUB_REPOSITORY" \
               --title "Kali VNC $TAG" \
-              --notes "Kali VNC $TAG. Moteur Android proroot 1.2.8 intégré et vérifié."
+              --notes "Kali VNC $TAG : invocation Android proroot minimale, sans binds /dev-/proc-/sys, shell /bin/sh, et repli automatique sans static-loader en cas de SIGSEGV."
           fi

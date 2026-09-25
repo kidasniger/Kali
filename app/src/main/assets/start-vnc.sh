@@ -1,9 +1,14 @@
-#!/bin/bash
+#!/bin/sh
 export HOME=/root USER=root LANG=C.UTF-8
 mkdir -p /root/.vnc /tmp/.X11-unix
 chmod 1777 /tmp/.X11-unix
 
 PASSWD_BIN="$(command -v tigervncpasswd || command -v vncpasswd)"
+if [ -z "$PASSWD_BIN" ]; then
+  echo "tigervncpasswd/vncpasswd introuvable"
+  exit 1
+fi
+
 printf '%s\n' '__PW__' | "$PASSWD_BIN" -f > /root/.vnc/passwd
 chmod 600 /root/.vnc/passwd
 

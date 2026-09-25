@@ -13,7 +13,7 @@ import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Socket
 
-/** Service au premier plan : installe Kali si besoin, lance proot + VNC, garde le tout en vie. */
+/** Service au premier plan : installe Kali si besoin, lance proroot + VNC, garde le tout en vie. */
 class KaliService : Service() {
     companion object {
         const val ACTION_STOP = "com.kalivnc.app.STOP"
@@ -83,7 +83,7 @@ class KaliService : Service() {
             Installer.prepareSession(this, Installer.vncPassword(this), w, h)
             KaliState.log("Démarrage du bureau Kali…")
 
-            val p = ProotRunner.builder(this, "exec /bin/bash /root/start-vnc.sh").start()
+            val p = ProotRunner.builder(this, "exec /bin/sh /root/start-vnc.sh").start()
             proc = p
             Thread {
                 try { p.inputStream.bufferedReader().forEachLine { KaliState.log(it) } } catch (_: Exception) { }
@@ -103,7 +103,7 @@ class KaliService : Service() {
                         "\n" + ProotRunner.diagnostics(this)
                 )
             }
-            Thread.sleep(3000) // laisse XFCE afficher son bureau
+            Thread.sleep(3000)
             KaliState.setPhase(KaliState.Phase.READY)
             p.waitFor()
             KaliState.log("Session Kali terminée.")

@@ -18,6 +18,8 @@ import java.security.SecureRandom
 
 object Installer {
     private object ProotRuntimeVersion { const val VALUE = "1.2.8" }
+    private const val APP_RUNTIME_VERSION = "1.6"
+
     fun rootfs(ctx: Context) = File(ctx.filesDir, "rootfs")
     private fun marker(ctx: Context, n: String) = File(ctx.filesDir, "markers/$n")
 
@@ -33,7 +35,6 @@ object Installer {
         return pw!!
     }
 
-    /** Installe tout ce qui manque, avec des étapes idempotentes et vérifiées. */
     fun ensure(ctx: Context) {
         for (d in listOf("bin", "tmp", "markers", "dl")) File(ctx.filesDir, d).mkdirs()
         ensureNativeRuntime(ctx)
@@ -123,6 +124,7 @@ object Installer {
 
     private fun requireGuestLayout(root: File) {
         val required = listOf(
+            File(root, "bin/sh"),
             File(root, "bin/bash"),
             File(root, "usr/bin/env"),
             File(root, "etc/apt"),
@@ -134,7 +136,6 @@ object Installer {
         }
     }
 
-    /** Réglages nécessaires pour que apt/dpkg fonctionnent sous PRoot. */
     private fun configureRootfs(ctx: Context) {
         val r = rootfs(ctx)
         File(r, "etc/resolv.conf").apply {
@@ -156,25 +157,25 @@ object Installer {
         File(r, "root").mkdirs()
     }
 
-    /**
-     * Teste PRoot dans le rootfs avant apt. Cela évite de transformer
-     * une erreur PRoot en faux message "apt code 255".
-     */
-    private fun verifyProot(ctx: Context) {
-        val probeMarker = marker(ctx, "proot-probe-${ProotRuntimeVersion.VALUE}")
-        if (probeMarker.exists()) return
-        KaliState.log("Diagnostic PRoot Android ${ProotRuntimeVersion.VALUE} : test du shell Kali…")
+    private data class ProbeResult(
+        val code: Int,
+        val output: String
+    )
+
+    private fun runProotProbe(ctx: Context, noStaticLoader: Boolean): ProbeResult {
         val p = ProotRunner.builder(
             ctx,
             """
             echo "PRoot probe: start"
             id
             pwd
+            test -x /bin/sh
             test -x /bin/bash
             /bin/true
-            /bin/bash -c 'echo PRoot probe: bash OK'
+            /bin/sh -c 'echo PRoot probe: sh OK'
             echo "PRoot probe: success"
-            """.trimIndent()
+            """.trimIndent(),
+            forceNoStaticLoader = noStaticLoader
         ).start()
 
         val output = buildString {
@@ -183,15 +184,45 @@ object Installer {
                 appendLine(it)
             }
         }
-        val code = p.waitFor()
-        if (code != 0) {
+        return ProbeResult(p.waitFor(), output)
+    }
+
+    private fun verifyProot(ctx: Context) {
+        val probeMarker = marker(ctx, "proot-probe-$APP_RUNTIME_VERSION")
+        if (probeMarker.exists()) return
+
+        KaliState.log("Diagnostic PRoot Android ${ProotRuntimeVersion.VALUE} : test du shell Kali…")
+        val adaptive = runProotProbe(ctx, noStaticLoader = false)
+
+        if (adaptive.code == 0) {
+            marker(ctx, "proot-mode-1.6").writeText("adaptive")
+            probeMarker.writeText("ok")
+            KaliState.log("PRoot : mode adaptatif validé.")
+            return
+        }
+
+        if (adaptive.code == 139) {
+            KaliState.log("PRoot : SIGSEGV détecté avec le mode adaptatif, nouvel essai sans static-loader…")
+            val fallback = runProotProbe(ctx, noStaticLoader = true)
+            if (fallback.code == 0) {
+                marker(ctx, "proot-mode-1.6").writeText("no-static-loader")
+                probeMarker.writeText("ok")
+                KaliState.log("PRoot : mode sans static-loader validé.")
+                return
+            }
             throw IOException(
-                "PRoot Android a quitté avec le code $code. " +
-                    (output.lineSequence().lastOrNull { it.isNotBlank() } ?: "aucun message PRoot") +
-                    "\n" + ProotRunner.diagnostics(ctx)
+                "PRoot Android a échoué deux fois. Premier code ${adaptive.code}, second code ${fallback.code}." +
+                    "\n--- premier essai ---\n${adaptive.output.trim()}" +
+                    "\n--- second essai ---\n${fallback.output.trim()}" +
+                    "\n${ProotRunner.diagnostics(ctx)}"
             )
         }
-        probeMarker.writeText("ok")
+
+        throw IOException(
+            "PRoot Android a quitté avec le code ${adaptive.code}. " +
+                (adaptive.output.lineSequence().lastOrNull { it.isNotBlank() } ?: "aucun message PRoot") +
+                "\n" + ProotRunner.diagnostics(ctx)
+        )
     }
 
     private fun ensurePackages(ctx: Context) {
@@ -239,7 +270,7 @@ object Installer {
             conn.connectTimeout = 20_000
             conn.readTimeout = 30_000
             conn.instanceFollowRedirects = false
-            conn.setRequestProperty("User-Agent", "KaliVNC/1.4")
+            conn.setRequestProperty("User-Agent", "KaliVNC/1.6")
             val code = conn.responseCode
             if (code in 300..399) {
                 val loc = conn.getHeaderField("Location") ?: throw IOException("Redirection sans Location")
@@ -375,7 +406,6 @@ object Installer {
                             chmod(out, (e.mode and 0x1FF) or 0x180)
                         }
                         else -> {
-                            // Périphériques/FIFO/sockets non nécessaires à ce rootfs utilisateur.
                         }
                     }
                 } catch (ex: Exception) {

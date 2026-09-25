@@ -6,6 +6,8 @@ import java.io.File
 object ProotRunner {
     private const val PROROOT_ENGINE_VERSION = "1.2.8"
     private const val PROROOT_LIBRARY = "libproroot.so"
+    private const val MODE_MARKER = "markers/proot-mode-1.6"
+
     private fun nativeDir(ctx: Context) = File(ctx.applicationInfo.nativeLibraryDir)
     fun launcher(ctx: Context) = File(nativeDir(ctx), PROROOT_LIBRARY)
     fun runtimeLog(ctx: Context) = File(ctx.filesDir, "proroot-runtime.log")
@@ -14,11 +16,14 @@ object ProotRunner {
         val f = runtimeLog(ctx)
         if (!f.exists()) return "Aucun journal natif PRoot disponible."
         return try {
-            f.readLines().takeLast(80).joinToString("\n")
+            f.readLines().takeLast(100).joinToString("\n")
         } catch (e: Exception) {
             "Lecture du journal PRoot impossible : ${e.message}"
         }
     }
+
+    private fun preferredNoStaticLoader(ctx: Context): Boolean =
+        File(ctx.filesDir, MODE_MARKER).let { it.exists() && it.readText().trim() == "no-static-loader" }
 
     private fun requireRuntime(ctx: Context) {
         val required = listOf(
@@ -32,7 +37,8 @@ object ProotRunner {
         val missing = required.filterNot { File(dir, it).exists() }
         if (missing.isNotEmpty()) {
             throw IllegalStateException(
-                "Moteur PRoot Android ${PROROOT_ENGINE_VERSION} incomplet : ${missing.joinToString()}"
+                "Moteur PRoot Android $PROROOT_ENGINE_VERSION incomplet : ${missing.joinToString()}"
+                    .replace("\$PROROOT_ENGINE_VERSION", PROROOT_ENGINE_VERSION)
             )
         }
         if (!launcher(ctx).canExecute()) {
@@ -40,28 +46,37 @@ object ProotRunner {
         }
     }
 
-    fun builder(ctx: Context, script: String): ProcessBuilder {
+    /**
+     * Invocation alignée sur le mode Android documenté de proroot.
+     * Aucun bind /dev,/proc,/sys n'est nécessaire ici.
+     *
+     * forceNoStaticLoader=true permet au probe de basculer automatiquement
+     * sur le chemin sans static-loader si le premier lancement provoque SIGSEGV.
+     */
+    fun builder(
+        ctx: Context,
+        script: String,
+        forceNoStaticLoader: Boolean? = null
+    ): ProcessBuilder {
         requireRuntime(ctx)
         val files = ctx.filesDir
         val root = Installer.rootfs(ctx)
         val tmp = File(files, "tmp").apply { mkdirs() }
+        val noStaticLoader = forceNoStaticLoader ?: preferredNoStaticLoader(ctx)
 
-        val cmd = mutableListOf(
-            launcher(ctx).path,
-            "-0",
-            "--link2symlink",
-            "--static-loader",
-            "-r", root.path,
-            "-w", "/root",
-            "-b", "/dev:/dev",
-            "-b", "/proc:/proc",
-            "-b", "/sys:/sys",
-            "/bin/bash", "-c",
-            script
-        )
+        val cmd = mutableListOf<String>().apply {
+            add(launcher(ctx).path)
+            add("-r"); add(root.path)
+            add("-0")
+            add("--link2symlink")
+            add("-w"); add("/root")
+            if (noStaticLoader) add("--no-static-loader")
+            add("/bin/sh"); add("-c"); add(script)
+        }
 
         val pb = ProcessBuilder(cmd)
         pb.directory(files)
+
         val env = pb.environment()
         env.clear()
         env["HOME"] = "/root"
@@ -76,7 +91,7 @@ object ProotRunner {
         env["PROROOT_TMP_DIR"] = tmp.path
         env["PROROOT_VERBOSE"] = "1"
         env["PROROOT_LOG_APPEND"] = runtimeLog(ctx).path
-        env["PROOT_NO_SECCOMP"] = "1"
+
         pb.redirectErrorStream(true)
         return pb
     }
