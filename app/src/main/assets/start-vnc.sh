@@ -9,14 +9,11 @@ if [ -z "$PASSWD_BIN" ]; then
   exit 1
 fi
 
-printf '%s\n' '__PW__' | "$PASSWD_BIN" -f > /root/.vnc/passwd
-chmod 600 /root/.vnc/passwd
-
 rm -f /tmp/.X1-lock /tmp/.X11-unix/X1
 
 Xtigervnc :1 -geometry __W__x__H__ -depth 24 \
-  -rfbauth /root/.vnc/passwd -rfbport __PORT__ -localhost \
-  -SecurityTypes VncAuth -AlwaysShared -ac -desktop Kali &
+  -rfbport __PORT__ -localhost -UseIPv4=1 \
+  -SecurityTypes None -AlwaysShared -ac -desktop Kali &
 XPID=$!
 
 for i in $(seq 1 40); do
