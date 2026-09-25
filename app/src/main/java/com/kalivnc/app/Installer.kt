@@ -18,7 +18,7 @@ import java.security.SecureRandom
 
 object Installer {
     private object ProotRuntimeVersion { const val VALUE = "5.4.0-pr" }
-    private const val APP_RUNTIME_VERSION = "1.8"
+    private const val APP_RUNTIME_VERSION = "1.9"
 
     fun rootfs(ctx: Context) = File(ctx.filesDir, "rootfs")
     private fun marker(ctx: Context, n: String) = File(ctx.filesDir, "markers/$n")
@@ -176,6 +176,9 @@ object Installer {
         KaliState.log("Installation de XFCE + serveur VNC…")
         KaliState.setProgress(-1)
 
+        val packageMarker = marker(ctx, "packages-$APP_RUNTIME_VERSION")
+        if (packageMarker.exists()) return
+
         val script = readAsset(ctx, "install-packages.sh").replace("__PKGS__", Config.APT_PACKAGES)
         val p = ProotRunner.builder(ctx, script).start()
         p.inputStream.bufferedReader().forEachLine { KaliState.log(it) }
@@ -187,7 +190,31 @@ object Installer {
                     "\n" + ProotRunner.diagnostics(ctx)
             )
         }
-        marker(ctx, "packages").writeText("ok")
+
+        val verify = ProotRunner.builder(
+            ctx,
+            """
+            command -v Xtigervnc
+            command -v tigervncpasswd || command -v vncpasswd
+            command -v startxfce4
+            echo "VNC/XFCE prérequis : OK"
+            """.trimIndent()
+        ).start()
+        val verifyOutput = buildString {
+            verify.inputStream.bufferedReader().forEachLine {
+                KaliState.log(it)
+                appendLine(it)
+            }
+        }
+        val verifyCode = verify.waitFor()
+        if (verifyCode != 0) {
+            throw IOException(
+                "Les composants VNC/XFCE sont absents après installation (code $verifyCode)." +
+                    "\n--- diagnostic ---\n" + verifyOutput.trim()
+            )
+        }
+
+        packageMarker.writeText("ok")
     }
 
     fun prepareSession(ctx: Context, pw: String, w: Int, h: Int) {
