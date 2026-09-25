@@ -196,6 +196,7 @@ object Installer {
                     "\n" + ProotRunner.diagnostics(ctx)
             )
         }
+
         probeMarker.writeText("ok")
         KaliState.log("PRoot : backend Android validé.")
     }
