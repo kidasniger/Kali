@@ -95,18 +95,19 @@ class RfbClient(
             inp.readFully(ByteArray(12))
             o.write("RFB 003.008\n".toByteArray()); o.flush()
 
-            // Sécurité : on exige "VNC Authentication" (type 2)
+            // Le serveur embarqué est strictement local et utilise SecurityTypes None.
+            // On conserve la négociation RFB 3.8 mais sans mot de passe, afin d'éviter
+            // les échecs VNC Auth et la blacklist de 127.0.0.1 par TigerVNC.
             val n = inp.readUnsignedByte()
             if (n == 0) {
                 val m = ByteArray(inp.readInt()); inp.readFully(m)
                 throw IOException(String(m))
             }
             val types = ByteArray(n); inp.readFully(types)
-            if (!types.contains(2.toByte())) throw IOException("Authentification VNC non proposée par le serveur")
-            o.write(2); o.flush()
-            val challenge = ByteArray(16); inp.readFully(challenge)
-            o.write(desResponse(challenge)); o.flush()
-            if (inp.readInt() != 0) throw IOException("Mot de passe VNC refusé")
+            if (!types.contains(1.toByte())) {
+                throw IOException("Le serveur VNC embarqué ne propose pas l'authentification locale sans mot de passe")
+            }
+            o.write(1); o.flush()
 
             // ClientInit (partagé) puis ServerInit
             o.write(1); o.flush()
