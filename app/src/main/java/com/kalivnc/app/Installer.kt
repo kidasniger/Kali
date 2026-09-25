@@ -172,12 +172,13 @@ object Installer {
     }
 
     private fun ensurePackages(ctx: Context) {
-        if (marker(ctx, "packages").exists()) return
-        KaliState.log("Installation de XFCE + serveur VNC…")
-        KaliState.setProgress(-1)
-
         val packageMarker = marker(ctx, "packages-$APP_RUNTIME_VERSION")
         if (packageMarker.exists()) return
+
+        // Old versions used a non-versioned "packages" marker. It must not
+        // suppress this compatibility check when the package set changes.
+        KaliState.log("Vérification/installation de XFCE + serveur VNC…")
+        KaliState.setProgress(-1)
 
         val script = readAsset(ctx, "install-packages.sh").replace("__PKGS__", Config.APT_PACKAGES)
         val p = ProotRunner.builder(ctx, script).start()
