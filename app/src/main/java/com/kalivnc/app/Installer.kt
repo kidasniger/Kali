@@ -18,7 +18,7 @@ import java.security.SecureRandom
 
 object Installer {
     private object ProotRuntimeVersion { const val VALUE = "5.4.0-pr" }
-    private const val APP_RUNTIME_VERSION = "1.9"
+    private const val APP_RUNTIME_VERSION = "2.0"
 
     fun rootfs(ctx: Context) = File(ctx.filesDir, "rootfs")
     private fun marker(ctx: Context, n: String) = File(ctx.filesDir, "markers/$n")
@@ -196,7 +196,6 @@ object Installer {
             ctx,
             """
             command -v Xtigervnc
-            command -v tigervncpasswd || command -v vncpasswd
             command -v startxfce4
             echo "VNC/XFCE prérequis : OK"
             """.trimIndent()
