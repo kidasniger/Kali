@@ -11,13 +11,15 @@ DEST="app/src/main/jniLibs/arm64-v8a"
 rm -rf "$WORK"
 mkdir -p "$WORK" "$DEST"
 
-# The pinned source repository contains SSH submodule URLs. CI uses HTTPS.
-git config --global url."https://github.com/".insteadOf "git@github.com:"
-git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
-
-git clone --recurse-submodules --depth 1 https://github.com/oonid/pr.git "$WORK"
+# The pinned source repository contains SSH submodule URLs. GitHub Actions
+# has no SSH key, so rewrite the checked-out .gitmodules before initializing them.
+git clone --depth 1 https://github.com/oonid/pr.git "$WORK"
 git -C "$WORK" fetch --depth 1 origin "$SRC_COMMIT"
 git -C "$WORK" checkout --detach "$SRC_COMMIT"
+
+sed -i   -e 's#git@github.com:#https://github.com/#g'   -e 's#ssh://git@github.com/#https://github.com/#g'   "$WORK/.gitmodules"
+
+git -C "$WORK" submodule sync --recursive
 git -C "$WORK" submodule update --init --recursive
 
 bash "$WORK/scripts/build.sh" --arch=arm64
