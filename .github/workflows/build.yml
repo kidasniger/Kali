@@ -39,11 +39,12 @@ jobs:
           test -f build.gradle.kts
           test -f app/build.gradle.kts
           test -f app/src/main/AndroidManifest.xml
-          grep -q 'versionCode = 11' app/build.gradle.kts
-          grep -q 'versionName = "1.8"' app/build.gradle.kts
+          grep -q 'versionCode = 12' app/build.gradle.kts
+          grep -q 'versionName = "1.9"' app/build.gradle.kts
           grep -q 'PROOT_LOADER' app/src/main/java/com/kalivnc/app/ProotRunner.kt
           grep -q 'PROOT_NO_SECCOMP' app/src/main/java/com/kalivnc/app/ProotRunner.kt
           grep -q 'PROOT_TMP_DIR' app/src/main/java/com/kalivnc/app/ProotRunner.kt
+          grep -q 'tigervnc-tools' app/src/main/java/com/kalivnc/app/Config.kt
           test -f app/src/main/assets/install-packages.sh
           test -f app/src/main/assets/start-vnc.sh
           test -f app/src/main/jniLibs/arm64-v8a/libproot.so
@@ -90,7 +91,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG=v1.8
+          TAG=v1.9
           APK=$(find app/build/outputs/apk/debug -type f -name '*.apk' | head -n1)
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" "$APK" --repo "$GITHUB_REPOSITORY" --clobber
