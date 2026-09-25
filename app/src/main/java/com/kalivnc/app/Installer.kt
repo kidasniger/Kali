@@ -131,36 +131,6 @@ object Installer {
         File(r, "root").mkdirs()
     }
 
-    private data class ProbeResult(
-        val code: Int,
-        val output: String
-    )
-
-    private fun runProotProbe(ctx: Context, noStaticLoader: Boolean): ProbeResult {
-        val p = ProotRunner.builder(
-            ctx,
-            """
-            echo "PRoot probe: start"
-            id
-            pwd
-            test -x /bin/sh
-            test -x /bin/bash
-            /bin/true
-            /bin/sh -c 'echo PRoot probe: sh OK'
-            echo "PRoot probe: success"
-            """.trimIndent(),
-            forceNoStaticLoader = noStaticLoader
-        ).start()
-
-        val output = buildString {
-            p.inputStream.bufferedReader().forEachLine {
-                KaliState.log(it)
-                appendLine(it)
-            }
-        }
-        return ProbeResult(p.waitFor(), output)
-    }
-
     private fun verifyProot(ctx: Context) {
         val probeMarker = marker(ctx, "proot-probe-$APP_RUNTIME_VERSION")
         if (probeMarker.exists()) return
