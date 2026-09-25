@@ -17,7 +17,7 @@ object Config {
     const val MAX_DESKTOP_WIDTH = 1280
 
     const val APT_PACKAGES =
-        "tigervnc-standalone-server tigervnc-common x11-xkb-utils xkb-data xauth x11-xserver-utils " +
+        "tigervnc-standalone-server tigervnc-common tigervnc-tools x11-xkb-utils xkb-data xauth x11-xserver-utils " +
         "xfonts-base fonts-dejavu-core dbus-x11 xfce4 xfce4-terminal adwaita-icon-theme " +
         "nmap curl nano net-tools iputils-ping"
 }
