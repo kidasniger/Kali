@@ -148,12 +148,11 @@ class RfbClient(
             pf.put(16.toByte()); pf.put(8.toByte()); pf.put(0.toByte()); pf.put(ByteArray(3))
             sendDirect(o, pf.array())
 
-            // Compatibilité TigerVNC : accepter ExtendedDesktopSize, DesktopSize et Raw.
-            val enc = ByteBuffer.allocate(16)
-            enc.put(2.toByte()); enc.put(0.toByte()); enc.putShort(3)
-            enc.putInt(-308) // ExtendedDesktopSize
-            enc.putInt(-223) // DesktopSize
-            enc.putInt(0)    // Raw
+            // La géométrie du bureau est fixe côté serveur : demander uniquement Raw.
+            // Cela évite que TigerVNC renvoie en boucle des pseudo-frames de taille.
+            val enc = ByteBuffer.allocate(8)
+            enc.put(2.toByte()); enc.put(0.toByte()); enc.putShort(1)
+            enc.putInt(0) // Raw
             sendDirect(o, enc.array())
 
             // Première demande d'image : envoi synchrone avant le callback UI.
@@ -184,12 +183,7 @@ class RfbClient(
                                     readRaw(inp, x, y, rw, rh)
                                     gotPixels = true
                                 }
-                                -223 -> resize(rw, rh)
-                                -308 -> {
-                                    readExtendedDesktopSize(inp, x, y, rw, rh)
-                                    resize(rw, rh)
-                                }
-                                else -> throw IOException("Encodage VNC non pris en charge : " + encoding)
+                                else -> throw IOException("Encodage VNC inattendu : " + encoding)
                             }
                         }
 
@@ -203,12 +197,15 @@ class RfbClient(
                             cb.onUpdate(this)
                             requestUpdate(true)
                         } else {
+                            // Une réponse vide est normale en mode incrémental.
+                            // Ne jamais revenir à une demande complète : cela recréait
+                            // la boucle ExtendedDesktopSize observée sur l'appareil.
                             emptyUpdates++
-                            if (emptyUpdates <= 20) {
-                                KaliState.log("VNC : mise à jour vide (#" + emptyUpdates + "), nouvelle demande complète…")
+                            if (emptyUpdates <= 3) {
+                                KaliState.log("VNC : aucune nouvelle image, attente incrémentale…")
                             }
-                            Thread.sleep(minOf(500L, 100L + emptyUpdates * 20L))
-                            requestUpdate(false)
+                            Thread.sleep(120)
+                            requestUpdate(true)
                         }
                     }
                     1 -> { inp.readUnsignedByte(); inp.readUnsignedShort(); val nc = inp.readUnsignedShort(); skip(inp, nc * 6L) }
@@ -233,26 +230,6 @@ class RfbClient(
             if (r < 0) throw IOException("Flux interrompu")
             left -= r
         }
-    }
-
-    private fun readExtendedDesktopSize(
-        inp: DataInputStream,
-        reason: Int,
-        result: Int,
-        w: Int,
-        h: Int
-    ) {
-        val screens = inp.readUnsignedByte()
-        inp.skipBytes(3)
-        repeat(screens) {
-            inp.readInt()
-            inp.readUnsignedShort()
-            inp.readUnsignedShort()
-            inp.readUnsignedShort()
-            inp.readUnsignedShort()
-            inp.readInt()
-        }
-        KaliState.log("VNC : ExtendedDesktopSize " + w + "x" + h + ", reason=" + reason + " result=" + result + " screens=" + screens)
     }
 
     private fun resize(w: Int, h: Int) {
