@@ -45,7 +45,6 @@ class RfbClient(
     fun close() {
         closedByUs = true
         try { socket?.close() } catch (_: Exception) { }
-        sender.shutdownNow()
     }
 
     // ------------------------------------------------------------- envoi (sérialisé)
