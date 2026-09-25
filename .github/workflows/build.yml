@@ -98,5 +98,5 @@ jobs:
             gh release create "$TAG" "$APK" \
               --repo "$GITHUB_REPOSITORY" \
               --title "Kali VNC $TAG" \
-              --notes "Kali VNC $TAG : correction du hook APT kali-check-apt-sources pour l’environnement PRoot Android, backend PRoot statique et loader dédié."
+              --notes "Kali VNC $TAG : correction du premier framebuffer VNC, gestion des mises à jour RFB vides et ExtendedDesktopSize, backend PRoot statique et loader dédié."
           fi
