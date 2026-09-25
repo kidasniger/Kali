@@ -39,8 +39,8 @@ jobs:
           test -f build.gradle.kts
           test -f app/build.gradle.kts
           test -f app/src/main/AndroidManifest.xml
-          grep -q 'versionCode = 13' app/build.gradle.kts
-          grep -q 'versionName = "2.0"' app/build.gradle.kts
+          grep -q 'versionCode = 14' app/build.gradle.kts
+          grep -q 'versionName = "2.1"' app/build.gradle.kts
           grep -q 'PROOT_LOADER' app/src/main/java/com/kalivnc/app/ProotRunner.kt
           grep -q 'PROOT_NO_SECCOMP' app/src/main/java/com/kalivnc/app/ProotRunner.kt
           grep -q 'PROOT_TMP_DIR' app/src/main/java/com/kalivnc/app/ProotRunner.kt
@@ -90,7 +90,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG=v2.0
+          TAG=v2.1
           APK=$(find app/build/outputs/apk/debug -type f -name '*.apk' | head -n1)
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" "$APK" --repo "$GITHUB_REPOSITORY" --clobber
