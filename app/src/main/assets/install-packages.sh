@@ -17,6 +17,23 @@ else
   echo "getent absent, test DNS ignoré"
 fi
 
+disable_kali_apt_hook() {
+  for cfg in /etc/apt/apt.conf.d/*; do
+    [ -f "$cfg" ] || continue
+    if grep -q 'kali-check-apt-sources' "$cfg" 2>/dev/null; then
+      cp -f "$cfg" "$cfg.kalivnc-original"
+      sed -i '/kali-check-apt-sources/d' "$cfg"
+      echo "Hook Kali incompatible PRoot neutralise : $cfg"
+    fi
+  done
+}
+
+echo "== préparation APT pour PRoot =="
+disable_kali_apt_hook
+
+echo "Hooks APT actifs :"
+apt-config dump 2>/dev/null | grep -i 'Update::Post-Invoke' || true
+
 echo "== apt-get update =="
 apt-get update -o Acquire::Check-Valid-Until=false -o Dpkg::Use-Pty=0
 RC=$?
