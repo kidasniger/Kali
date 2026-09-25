@@ -9,7 +9,6 @@ import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.nio.ByteBuffer
-import java.util.concurrent.Executors
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
 
@@ -36,8 +35,8 @@ class RfbClient(
 
     @Volatile private var closedByUs = false
     private var socket: Socket? = null
-    private val sender = Executors.newSingleThreadExecutor()
     @Volatile private var out: OutputStream? = null
+    private val outputLock = Any()
 
     fun start() {
         Thread({ runLoop() }, "rfb-reader").start()
@@ -53,11 +52,21 @@ class RfbClient(
 
     private fun send(b: ByteArray) {
         if (closedByUs) return
-        try {
-            sender.execute {
-                try { out?.write(b); out?.flush() } catch (_: Exception) { }
+        val stream = out ?: return
+        synchronized(outputLock) {
+            try {
+                stream.write(b)
+                stream.flush()
+            } catch (_: Exception) {
             }
-        } catch (_: Exception) { }
+        }
+    }
+
+    private fun sendDirect(stream: OutputStream, b: ByteArray) {
+        synchronized(outputLock) {
+            stream.write(b)
+            stream.flush()
+        }
     }
 
     fun sendKey(keysym: Int, down: Boolean) {
@@ -127,25 +136,32 @@ class RfbClient(
             inp.readFully(ByteArray(inp.readInt()))      // nom du bureau
             resize(w, h)
 
-            // À partir d'ici, toutes les écritures passent par le thread d'envoi.
+            // À partir d'ici, toutes les écritures sont synchronisées sur la socket.
             out = o
 
-            // Format de pixels imposé : 32 bits, 0x00RRGGBB, little-endian
+            // Format de pixels imposé : 32 bits, true-color, little-endian.
             val pf = ByteBuffer.allocate(20)
             pf.put(0.toByte()); pf.put(ByteArray(3))
             pf.put(32.toByte()); pf.put(24.toByte()); pf.put(0.toByte()); pf.put(1.toByte())
             pf.putShort(255); pf.putShort(255); pf.putShort(255)
             pf.put(16.toByte()); pf.put(8.toByte()); pf.put(0.toByte()); pf.put(ByteArray(3))
-            send(pf.array())
+            sendDirect(o, pf.array())
 
-            // Encodages : Raw + DesktopSize
-            val enc = ByteBuffer.allocate(12)
-            enc.put(2.toByte()); enc.put(0.toByte()); enc.putShort(2)
-            enc.putInt(0); enc.putInt(-223)
-            send(enc.array())
+            // Demander uniquement Raw pour la première image.
+            val enc = ByteBuffer.allocate(8)
+            enc.put(2.toByte()); enc.put(0.toByte()); enc.putShort(1)
+            enc.putInt(0)
+            sendDirect(o, enc.array())
 
+            // Première demande d'image : envoi synchrone avant le callback UI.
+            val first = ByteBuffer.allocate(10)
+            first.put(3.toByte()); first.put(0.toByte())
+            first.putShort(0); first.putShort(0)
+            first.putShort(w.toShort()); first.putShort(h.toShort())
+            sendDirect(o, first.array())
+
+            KaliState.log("VNC : première demande d'image envoyée (${w}x${h}).")
             cb.onReady(this, w, h)
-            requestUpdate(false)
 
             while (!closedByUs) {
                 when (val t = inp.readUnsignedByte()) {
@@ -177,7 +193,6 @@ class RfbClient(
             if (!closedByUs) reason = e.message ?: e.javaClass.simpleName
         } finally {
             try { socket?.close() } catch (_: Exception) { }
-            sender.shutdown()
             if (!closedByUs) cb.onClosed(this, reason)
         }
     }
