@@ -48,7 +48,10 @@ jobs:
           test -f app/src/main/assets/start-vnc.sh
           test -f app/src/main/jniLibs/arm64-v8a/libproot.so
           test -f app/src/main/jniLibs/arm64-v8a/libproot-loader.so
-          ! find app/src/main/jniLibs/arm64-v8a -maxdepth 1 -type f -name 'libproroot-*.so' | grep -q .
+          test ! -e app/src/main/jniLibs/arm64-v8a/libproroot-runtime.so
+          test ! -e app/src/main/jniLibs/arm64-v8a/libproroot-linker.so
+          test ! -e app/src/main/jniLibs/arm64-v8a/libproroot-bridge.so
+          test ! -e app/src/main/jniLibs/arm64-v8a/libproroot-stub-loader.so
           bash -n scripts/fetch-proroot.sh
 
       - name: Clean workspace
