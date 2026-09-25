@@ -32,6 +32,8 @@ class RfbClient(
     @Volatile var bitmap: Bitmap? = null
     @Volatile var fbW = 0
     @Volatile var fbH = 0
+    @Volatile private var hasFrame = false
+    private var emptyUpdates = 0
 
     @Volatile private var closedByUs = false
     private var socket: Socket? = null
@@ -146,10 +148,12 @@ class RfbClient(
             pf.put(16.toByte()); pf.put(8.toByte()); pf.put(0.toByte()); pf.put(ByteArray(3))
             sendDirect(o, pf.array())
 
-            // Demander uniquement Raw pour la première image.
-            val enc = ByteBuffer.allocate(8)
-            enc.put(2.toByte()); enc.put(0.toByte()); enc.putShort(1)
-            enc.putInt(0)
+            // Compatibilité TigerVNC : accepter ExtendedDesktopSize, DesktopSize et Raw.
+            val enc = ByteBuffer.allocate(16)
+            enc.put(2.toByte()); enc.put(0.toByte()); enc.putShort(3)
+            enc.putInt(-308) // ExtendedDesktopSize
+            enc.putInt(-223) // DesktopSize
+            enc.putInt(0)    // Raw
             sendDirect(o, enc.array())
 
             // Première demande d'image : envoi synchrone avant le callback UI.
@@ -159,28 +163,53 @@ class RfbClient(
             first.putShort(w.toShort()); first.putShort(h.toShort())
             sendDirect(o, first.array())
 
-            KaliState.log("VNC : première demande d'image envoyée (${w}x${h}).")
-            cb.onReady(this, w, h)
+            hasFrame = false
+            emptyUpdates = 0
+            KaliState.log("VNC : première demande d'image envoyée (" + w + "x" + h + "). En attente des pixels…")
 
             while (!closedByUs) {
                 when (val t = inp.readUnsignedByte()) {
                     0 -> {
                         inp.readUnsignedByte()
                         val rects = inp.readUnsignedShort()
-                        var resized = false
+                        var gotPixels = false
+
                         repeat(rects) {
                             val x = inp.readUnsignedShort()
                             val y = inp.readUnsignedShort()
                             val rw = inp.readUnsignedShort()
                             val rh = inp.readUnsignedShort()
-                            when (val e = inp.readInt()) {
-                                0 -> readRaw(inp, x, y, rw, rh)
-                                -223 -> { resize(rw, rh); resized = true; cb.onReady(this, rw, rh) }
-                                else -> throw IOException("Encodage VNC non pris en charge : $e")
+                            when (val encoding = inp.readInt()) {
+                                0 -> {
+                                    readRaw(inp, x, y, rw, rh)
+                                    gotPixels = true
+                                }
+                                -223 -> resize(rw, rh)
+                                -308 -> {
+                                    readExtendedDesktopSize(inp, x, y, rw, rh)
+                                    resize(rw, rh)
+                                }
+                                else -> throw IOException("Encodage VNC non pris en charge : " + encoding)
                             }
                         }
-                        cb.onUpdate(this)
-                        requestUpdate(!resized)
+
+                        if (gotPixels) {
+                            emptyUpdates = 0
+                            if (!hasFrame) {
+                                hasFrame = true
+                                KaliState.log("VNC : première image reçue.")
+                                cb.onReady(this, fbW, fbH)
+                            }
+                            cb.onUpdate(this)
+                            requestUpdate(true)
+                        } else {
+                            emptyUpdates++
+                            if (emptyUpdates <= 20) {
+                                KaliState.log("VNC : mise à jour vide (#" + emptyUpdates + "), nouvelle demande complète…")
+                            }
+                            Thread.sleep(minOf(500L, 100L + emptyUpdates * 20L))
+                            requestUpdate(false)
+                        }
                     }
                     1 -> { inp.readUnsignedByte(); inp.readUnsignedShort(); val nc = inp.readUnsignedShort(); skip(inp, nc * 6L) }
                     2 -> { /* bell */ }
@@ -204,6 +233,26 @@ class RfbClient(
             if (r < 0) throw IOException("Flux interrompu")
             left -= r
         }
+    }
+
+    private fun readExtendedDesktopSize(
+        inp: DataInputStream,
+        reason: Int,
+        result: Int,
+        w: Int,
+        h: Int
+    ) {
+        val screens = inp.readUnsignedByte()
+        inp.skipBytes(3)
+        repeat(screens) {
+            inp.readInt()
+            inp.readUnsignedShort()
+            inp.readUnsignedShort()
+            inp.readUnsignedShort()
+            inp.readUnsignedShort()
+            inp.readInt()
+        }
+        KaliState.log("VNC : ExtendedDesktopSize " + w + "x" + h + ", reason=" + reason + " result=" + result + " screens=" + screens)
     }
 
     private fun resize(w: Int, h: Int) {
