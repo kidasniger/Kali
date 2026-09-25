@@ -25,12 +25,22 @@ writable de l'application.
 Source du backend :
 https://github.com/oonid/pr/tree/fcf25cb2396361f0be2edfc96fdd61a6e738c9d9
 
-## VNC\n\nLa version 1.9 installe explicitement `tigervnc-tools`, qui fournit `vncpasswd`, puis vérifie `Xtigervnc`, `vncpasswd/tigervncpasswd` et `startxfce4` avant de déclarer l’installation terminée. citeturn656190search5turn419820search1\n\n## Premier lancement
+## VNC v2.0
+
+Le bureau VNC intégré écoute uniquement sur `127.0.0.1:5901` et utilise
+`SecurityTypes None` pour éviter les échecs d'authentification entre le
+serveur TigerVNC et le client RFB embarqué. Le serveur n'est donc pas exposé
+directement au réseau.
+
+Le démarrage vérifie `Xtigervnc` et `startxfce4` avant de déclarer la
+session prête.
+
+## Premier lancement
 
 - Internet + plusieurs Go libres.
 - Le rootfs Kali est téléchargé puis vérifié par SHA-256 avant extraction.
 - Un probe PRoot vérifie le shell, l'architecture ARM64 et le chemin de travail
-  avant `apt`.
+  avant l'installation.
 - Le serveur VNC reste limité à `127.0.0.1`.
 
 ## Attribution
