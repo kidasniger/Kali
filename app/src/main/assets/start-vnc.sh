@@ -16,6 +16,18 @@ for i in $(seq 1 40); do
 done
 
 export DISPLAY=:1
+
+# xrdb (appelé par startxfce4) invoque le vrai "cpp" de gcc, qui segfault (cc1)
+# dans cet environnement PRoot. On le remplace par un pseudo-préprocesseur
+# minimal qui se contente de recopier le fichier, sans macros ni #include.
+cat > /tmp/kalivnc-cpp <<'CPPEOF'
+#!/bin/sh
+eval last="\${$#}"
+exec cat "$last"
+CPPEOF
+chmod +x /tmp/kalivnc-cpp
+export CPP=/tmp/kalivnc-cpp
+
 dbus-launch --exit-with-session startxfce4 &
 
 wait $XPID
