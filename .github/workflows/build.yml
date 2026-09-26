@@ -45,7 +45,8 @@ jobs:
           grep -q 'PROOT_NO_SECCOMP' app/src/main/java/com/kalivnc/app/ProotRunner.kt
           grep -q 'PROOT_TMP_DIR' app/src/main/java/com/kalivnc/app/ProotRunner.kt
           grep -q 'Raw' app/src/main/java/com/kalivnc/app/RfbClient.kt
-          ! grep -q 'ExtendedDesktopSize' app/src/main/java/com/kalivnc/app/RfbClient.kt
+          ! grep -q 'enc.putInt(-308)' app/src/main/java/com/kalivnc/app/RfbClient.kt
+          ! grep -q 'enc.putInt(-223)' app/src/main/java/com/kalivnc/app/RfbClient.kt
           grep -q 'Listening for VNC connections' app/src/main/java/com/kalivnc/app/KaliService.kt
                     test -f app/src/main/assets/install-packages.sh
           test -f app/src/main/assets/start-vnc.sh
