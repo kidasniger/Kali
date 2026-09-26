@@ -39,11 +39,16 @@ jobs:
           test -f build.gradle.kts
           test -f app/build.gradle.kts
           test -f app/src/main/AndroidManifest.xml
-          grep -q 'versionCode = 13' app/build.gradle.kts
-          grep -q 'versionName = "2.0"' app/build.gradle.kts
+          grep -q 'versionCode = 16' app/build.gradle.kts
+          grep -q 'versionName = "2.3"' app/build.gradle.kts
           grep -q 'PROOT_LOADER' app/src/main/java/com/kalivnc/app/ProotRunner.kt
           grep -q 'PROOT_NO_SECCOMP' app/src/main/java/com/kalivnc/app/ProotRunner.kt
           grep -q 'PROOT_TMP_DIR' app/src/main/java/com/kalivnc/app/ProotRunner.kt
+          grep -q 'Raw' app/src/main/java/com/kalivnc/app/RfbClient.kt
+          ! grep -q 'enc.putInt(-308)' app/src/main/java/com/kalivnc/app/RfbClient.kt
+          ! grep -q 'enc.putInt(-223)' app/src/main/java/com/kalivnc/app/RfbClient.kt
+          grep -q 'vncReady' app/src/main/java/com/kalivnc/app/KaliService.kt
+          grep -q 'setPhase(KaliState.Phase.READY)' app/src/main/java/com/kalivnc/app/KaliService.kt
                     test -f app/src/main/assets/install-packages.sh
           test -f app/src/main/assets/start-vnc.sh
           test -f app/src/main/jniLibs/arm64-v8a/libproot.so
@@ -90,7 +95,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG=v2.0
+          TAG=v2.3
           APK=$(find app/build/outputs/apk/debug -type f -name '*.apk' | head -n1)
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" "$APK" --repo "$GITHUB_REPOSITORY" --clobber
@@ -98,5 +103,5 @@ jobs:
             gh release create "$TAG" "$APK" \
               --repo "$GITHUB_REPOSITORY" \
               --title "Kali VNC $TAG" \
-              --notes "Kali VNC $TAG : correction du hook APT kali-check-apt-sources pour l’environnement PRoot Android, backend PRoot statique et loader dédié."
+              --notes "Kali VNC $TAG : synchronisation du service sur le signal réel de démarrage TigerVNC, Raw + mises à jour RFB incrémentales."
           fi

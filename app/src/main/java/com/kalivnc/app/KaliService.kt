@@ -12,6 +12,8 @@ import android.os.PowerManager
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /** Service au premier plan : installe Kali si besoin, lance proroot + VNC, garde le tout en vie. */
 class KaliService : Service() {
@@ -85,31 +87,64 @@ class KaliService : Service() {
 
             val p = ProotRunner.builder(this, "exec /bin/sh /root/start-vnc.sh").start()
             proc = p
+
+            // The VNC server itself is the authoritative readiness signal.
+            // Waiting for an independent TCP probe caused STARTING to remain
+            // stuck even though TigerVNC was already listening on 5901.
+            val vncReady = CountDownLatch(1)
             Thread {
-                try { p.inputStream.bufferedReader().forEachLine { KaliState.log(it) } } catch (_: Exception) { }
+                try {
+                    p.inputStream.bufferedReader().forEachLine { line ->
+                        KaliState.log(line)
+                        val normalized = line.lowercase()
+                        if (
+                            normalized.contains("listening for vnc connections") ||
+                            normalized.contains("created vnc server for screen")
+                        ) {
+                            vncReady.countDown()
+                        }
+                    }
+                } catch (_: Exception) {
+                } finally {
+                    if (!p.isAlive) vncReady.countDown()
+                }
             }.start()
 
-            val t0 = System.currentTimeMillis()
-            var up = false
-            while (p.isAlive && System.currentTimeMillis() - t0 < 180_000) {
-                if (portOpen()) { up = true; break }
-                Thread.sleep(700)
-            }
-            if (!up) {
+            // Filet de sécurité : si le texte exact loggé par TigerVNC diffère
+            // d'une version à l'autre, un port ouvert sur 127.0.0.1 prouve aussi
+            // que le serveur écoute. Les deux signaux sont indépendants ;
+            // le premier arrivé déclenche le passage à READY.
+            Thread {
+                while (p.isAlive && vncReady.count > 0) {
+                    if (portOpen()) { vncReady.countDown(); break }
+                    Thread.sleep(300)
+                }
+            }.start()
+
+            val signaled = vncReady.await(30, TimeUnit.SECONDS)
+            if (!signaled) {
                 val exitCode = try { p.exitValue() } catch (_: IllegalThreadStateException) { null }
                 val cause = if (exitCode != null)
                     "Le moteur PRoot a terminé avec le code $exitCode."
                 else
-                    "Le moteur PRoot est toujours actif (délai dépassé)."
+                    "TigerVNC n'a pas signalé son écoute après 30 secondes."
                 throw IOException(
-                    "Le serveur VNC n'a pas démarré. $cause\n" + ProotRunner.diagnostics(this)
+                    "Le serveur VNC n'a pas confirmé son démarrage. $cause\n" +
+                        ProotRunner.diagnostics(this)
                 )
             }
-            Thread.sleep(3000)
+
+            // Give the X session a moment to finish starting, then let the
+            // embedded RFB client perform the actual connection/handshake.
+            Thread.sleep(500)
+            KaliState.log("VNC : serveur prêt, ouverture du client RFB…")
             KaliState.setPhase(KaliState.Phase.READY)
-            p.waitFor()
-            KaliState.log("Session Kali terminée.")
-            KaliState.setPhase(KaliState.Phase.IDLE)
+
+            val exitCode = p.waitFor()
+            KaliState.log("Session Kali terminée (code $exitCode).")
+            if (KaliState.phase != KaliState.Phase.ERROR) {
+                KaliState.setPhase(KaliState.Phase.IDLE)
+            }
         } catch (e: Exception) {
             KaliState.log("Erreur : ${e.message}")
             KaliState.setPhase(KaliState.Phase.ERROR)

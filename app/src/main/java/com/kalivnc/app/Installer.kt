@@ -18,7 +18,7 @@ import java.security.SecureRandom
 
 object Installer {
     private object ProotRuntimeVersion { const val VALUE = "5.4.0-pr" }
-    private const val APP_RUNTIME_VERSION = "2.0"
+    private const val APP_RUNTIME_VERSION = "2.1"
 
     fun rootfs(ctx: Context) = File(ctx.filesDir, "rootfs")
     private fun marker(ctx: Context, n: String) = File(ctx.filesDir, "markers/$n")

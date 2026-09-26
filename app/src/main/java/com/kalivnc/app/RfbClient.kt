@@ -9,7 +9,6 @@ import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.nio.ByteBuffer
-import java.util.concurrent.Executors
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
 
@@ -33,11 +32,13 @@ class RfbClient(
     @Volatile var bitmap: Bitmap? = null
     @Volatile var fbW = 0
     @Volatile var fbH = 0
+    @Volatile private var hasFrame = false
+    private var emptyUpdates = 0
 
     @Volatile private var closedByUs = false
     private var socket: Socket? = null
-    private val sender = Executors.newSingleThreadExecutor()
     @Volatile private var out: OutputStream? = null
+    private val outputLock = Any()
 
     fun start() {
         Thread({ runLoop() }, "rfb-reader").start()
@@ -46,18 +47,27 @@ class RfbClient(
     fun close() {
         closedByUs = true
         try { socket?.close() } catch (_: Exception) { }
-        sender.shutdownNow()
     }
 
     // ------------------------------------------------------------- envoi (sérialisé)
 
     private fun send(b: ByteArray) {
         if (closedByUs) return
-        try {
-            sender.execute {
-                try { out?.write(b); out?.flush() } catch (_: Exception) { }
+        val stream = out ?: return
+        synchronized(outputLock) {
+            try {
+                stream.write(b)
+                stream.flush()
+            } catch (_: Exception) {
             }
-        } catch (_: Exception) { }
+        }
+    }
+
+    private fun sendDirect(stream: OutputStream, b: ByteArray) {
+        synchronized(outputLock) {
+            stream.write(b)
+            stream.flush()
+        }
     }
 
     fun sendKey(keysym: Int, down: Boolean) {
@@ -127,45 +137,76 @@ class RfbClient(
             inp.readFully(ByteArray(inp.readInt()))      // nom du bureau
             resize(w, h)
 
-            // À partir d'ici, toutes les écritures passent par le thread d'envoi.
+            // À partir d'ici, toutes les écritures sont synchronisées sur la socket.
             out = o
 
-            // Format de pixels imposé : 32 bits, 0x00RRGGBB, little-endian
+            // Format de pixels imposé : 32 bits, true-color, little-endian.
             val pf = ByteBuffer.allocate(20)
             pf.put(0.toByte()); pf.put(ByteArray(3))
             pf.put(32.toByte()); pf.put(24.toByte()); pf.put(0.toByte()); pf.put(1.toByte())
             pf.putShort(255); pf.putShort(255); pf.putShort(255)
             pf.put(16.toByte()); pf.put(8.toByte()); pf.put(0.toByte()); pf.put(ByteArray(3))
-            send(pf.array())
+            sendDirect(o, pf.array())
 
-            // Encodages : Raw + DesktopSize
-            val enc = ByteBuffer.allocate(12)
-            enc.put(2.toByte()); enc.put(0.toByte()); enc.putShort(2)
-            enc.putInt(0); enc.putInt(-223)
-            send(enc.array())
+            // La géométrie du bureau est fixe côté serveur : demander uniquement Raw.
+            // Cela évite que TigerVNC renvoie en boucle des pseudo-frames de taille.
+            val enc = ByteBuffer.allocate(8)
+            enc.put(2.toByte()); enc.put(0.toByte()); enc.putShort(1)
+            enc.putInt(0) // Raw
+            sendDirect(o, enc.array())
 
-            cb.onReady(this, w, h)
-            requestUpdate(false)
+            // Première demande d'image : envoi synchrone avant le callback UI.
+            val first = ByteBuffer.allocate(10)
+            first.put(3.toByte()); first.put(0.toByte())
+            first.putShort(0); first.putShort(0)
+            first.putShort(w.toShort()); first.putShort(h.toShort())
+            sendDirect(o, first.array())
+
+            hasFrame = false
+            emptyUpdates = 0
+            KaliState.log("VNC : première demande d'image envoyée (" + w + "x" + h + "). En attente des pixels…")
 
             while (!closedByUs) {
                 when (val t = inp.readUnsignedByte()) {
                     0 -> {
                         inp.readUnsignedByte()
                         val rects = inp.readUnsignedShort()
-                        var resized = false
+                        var gotPixels = false
+
                         repeat(rects) {
                             val x = inp.readUnsignedShort()
                             val y = inp.readUnsignedShort()
                             val rw = inp.readUnsignedShort()
                             val rh = inp.readUnsignedShort()
-                            when (val e = inp.readInt()) {
-                                0 -> readRaw(inp, x, y, rw, rh)
-                                -223 -> { resize(rw, rh); resized = true; cb.onReady(this, rw, rh) }
-                                else -> throw IOException("Encodage VNC non pris en charge : $e")
+                            when (val encoding = inp.readInt()) {
+                                0 -> {
+                                    readRaw(inp, x, y, rw, rh)
+                                    gotPixels = true
+                                }
+                                else -> throw IOException("Encodage VNC inattendu : " + encoding)
                             }
                         }
-                        cb.onUpdate(this)
-                        requestUpdate(!resized)
+
+                        if (gotPixels) {
+                            emptyUpdates = 0
+                            if (!hasFrame) {
+                                hasFrame = true
+                                KaliState.log("VNC : première image reçue.")
+                                cb.onReady(this, fbW, fbH)
+                            }
+                            cb.onUpdate(this)
+                            requestUpdate(true)
+                        } else {
+                            // Une réponse vide est normale en mode incrémental.
+                            // Ne jamais revenir à une demande complète : cela recréait
+                            // la boucle ExtendedDesktopSize observée sur l'appareil.
+                            emptyUpdates++
+                            if (emptyUpdates <= 3) {
+                                KaliState.log("VNC : aucune nouvelle image, attente incrémentale…")
+                            }
+                            Thread.sleep(120)
+                            requestUpdate(true)
+                        }
                     }
                     1 -> { inp.readUnsignedByte(); inp.readUnsignedShort(); val nc = inp.readUnsignedShort(); skip(inp, nc * 6L) }
                     2 -> { /* bell */ }
@@ -177,7 +218,6 @@ class RfbClient(
             if (!closedByUs) reason = e.message ?: e.javaClass.simpleName
         } finally {
             try { socket?.close() } catch (_: Exception) { }
-            sender.shutdown()
             if (!closedByUs) cb.onClosed(this, reason)
         }
     }

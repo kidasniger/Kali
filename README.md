@@ -25,7 +25,7 @@ writable de l'application.
 Source du backend :
 https://github.com/oonid/pr/tree/fcf25cb2396361f0be2edfc96fdd61a6e738c9d9
 
-## VNC v2.0
+## VNC
 
 Le bureau VNC intégré écoute uniquement sur `127.0.0.1:5901` et utilise
 `SecurityTypes None` pour éviter les échecs d'authentification entre le

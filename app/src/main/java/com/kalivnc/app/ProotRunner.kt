@@ -56,6 +56,9 @@ object ProotRunner {
             "-r", root.path,
             "-0",
             "--link2symlink",
+            "-b", "/dev",
+            "-b", "/proc",
+            "-b", "/sys",
             "-w", "/root",
             "/bin/sh", "-c", script
         )
