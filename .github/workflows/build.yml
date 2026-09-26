@@ -47,7 +47,8 @@ jobs:
           grep -q 'Raw' app/src/main/java/com/kalivnc/app/RfbClient.kt
           ! grep -q 'enc.putInt(-308)' app/src/main/java/com/kalivnc/app/RfbClient.kt
           ! grep -q 'enc.putInt(-223)' app/src/main/java/com/kalivnc/app/RfbClient.kt
-          grep -q 'Listening for VNC connections' app/src/main/java/com/kalivnc/app/KaliService.kt
+          grep -q 'vncReady' app/src/main/java/com/kalivnc/app/KaliService.kt
+          grep -q 'setPhase(KaliState.Phase.READY)' app/src/main/java/com/kalivnc/app/KaliService.kt
                     test -f app/src/main/assets/install-packages.sh
           test -f app/src/main/assets/start-vnc.sh
           test -f app/src/main/jniLibs/arm64-v8a/libproot.so
